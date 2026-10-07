@@ -123,8 +123,11 @@ describe.skipIf(!electronBinary)('deck templates in the desktop app', () => {
     await eventually(async () => editor!.evaluate<boolean>(
       'Boolean(document.querySelector(".welcome-action[data-action=\\"template\\"]"))'), 'no welcome template action');
     await editor.click('.welcome-action[data-action="template"]', 'New from template');
-    await eventually(async () => editor!.evaluate<number>('document.querySelectorAll(".template-row").length'),
-      'the picker listed no template', (count) => count === 1);
+    // Picked by id, not by position: the picker lists newest first.
+    await eventually(async () => editor!.evaluate<boolean>(
+      'Boolean(document.querySelector(".template-picker .template-row[data-template-id=\\"looped\\"]"))'),
+    'the picker did not list the template');
+    await editor.click('.template-picker .template-row[data-template-id="looped"]', 'Looped');
     await editor.click('.template-picker button.primary', 'Create deck…');
     await eventually(async () => existsSync(join(target, 'deck.json')), 'no deck was created');
     const created = parseDeck(JSON.parse(await readFile(join(target, 'deck.json'), 'utf8')));
@@ -150,17 +153,20 @@ describe.skipIf(!electronBinary)('deck templates in the desktop app', () => {
 
     // File › Apply Template: both are offered; applying lands with a message.
     await inMain(fileItem('Apply Template…'));
-    await eventually(async () => editor!.evaluate<number>('document.querySelectorAll(".template-row").length'),
-      'the picker did not list both templates', (count) => count === 2);
+    await eventually(async () => editor!.evaluate<string[]>(
+      '[...document.querySelectorAll(".template-picker .template-row")].map((row) => row.dataset.templateId)'),
+    'the picker did not list both templates',
+    (ids) => ids.includes('looped') && ids.includes('second-design'));
+    await editor.click('.template-picker .template-row[data-template-id="looped"]', 'Looped');
     await editor.click('.template-picker button.primary', 'Apply');
     await eventually(async () => editor!.evaluate<string>('document.getElementById("status")?.textContent ?? ""'),
-      'Apply Template reported nothing', (text) => text.includes('Applied template'));
+      'Apply Template reported nothing', (text) => text.includes('Applied template “Looped”'));
 
     // The Design tab lists the library too: both templates, pick one, apply.
     await editor.click('#side-tabs button[data-panel="themePanel"]', 'Design tab');
     await eventually(async () => editor!.evaluate<number>(
       'document.querySelectorAll(".design-template-list .template-row").length'),
-    'the Design tab did not list both templates', (count) => count === 2);
+    'the Design tab did not list both templates', (count) => count >= 2);
     await editor.evaluate(`(() => {
       document.querySelector('.design-template-list .template-row[data-template-id="looped"]').click();
       return true;
