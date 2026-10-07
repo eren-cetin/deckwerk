@@ -136,6 +136,7 @@ const UpdateDeckOperation = z.object({
   customThemes: DeckSchema.shape.customThemes.removeDefault().optional(),
   layoutMasters: DeckSchema.shape.layoutMasters.removeDefault().optional(),
   customLayouts: DeckSchema.shape.customLayouts.removeDefault().optional(),
+  sections: DeckSchema.shape.sections.removeDefault().optional(),
   morphEasing: z.enum(['ease-in-out', 'ease-out', 'linear']).optional(),
 });
 /**
@@ -355,6 +356,7 @@ function applyOperation(deck: Deck, operation: AgentOperation): void {
       if (operation.customThemes !== undefined) {
         deck.customThemes = structuredClone(operation.customThemes);
       }
+      if (operation.sections !== undefined) deck.sections = structuredClone(operation.sections);
       if (operation.morphEasing !== undefined) deck.morphEasing = operation.morphEasing;
       return;
     case 'setSlideProperties': {

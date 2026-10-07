@@ -420,6 +420,7 @@ export function capabilities(): Capability[] {
         "layoutMasterId and layoutPlaceholder are editor-maintained links between layout masters and their placeholders (slots 'title', 'subtitle', 'body', 'caption', numbered like 'body-2' for columns); ordinary authored elements should leave them unset.",
         'skipped: true keeps a slide in the deck and editable but steps over it when presenting. Use it instead of deleting a slide you may want back.',
         'notes is the presenter-view script for the slide; name is the label in the slide rail.',
+        "sections group slides under named, foldable headers in the rail: deck.sections lists { id, name } (set with updateDeck), and a slide's section names the one it is in; a slide without one is in the section of the slide before it. In authored HTML a slide's section is data-section=\"<id>\"; outline entries in context name it.",
       ],
       slide: { background: { color: '#0f172a', image: null } },
       elements: [

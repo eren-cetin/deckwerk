@@ -126,6 +126,7 @@ function applyLenient(
       if (op.themeHistory !== undefined) deck.themeHistory = [...op.themeHistory];
       if (op.recentColors !== undefined) deck.recentColors = [...op.recentColors];
       if (op.pageNumbers !== undefined) deck.pageNumbers = structuredClone(op.pageNumbers);
+      if (op.sections !== undefined) deck.sections = structuredClone(op.sections);
       if (op.customThemes !== undefined) deck.customThemes = structuredClone(op.customThemes);
       if (op.layoutMasters !== undefined) deck.layoutMasters = structuredClone(op.layoutMasters);
       if (op.customLayouts !== undefined) deck.customLayouts = structuredClone(op.customLayouts);

@@ -1063,3 +1063,167 @@ describe('dragging slides to reorder them', () => {
     expect(store.canUndo()).toBe(false);
   });
 });
+
+describe('sections in the slide rail', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+    // Folds are remembered in localStorage; each test starts with none.
+    const stored = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => { stored.set(key, value); },
+        removeItem: (key: string) => { stored.delete(key); },
+        clear: () => stored.clear(),
+      },
+    });
+  });
+
+  /** Five slides, the third one current. */
+  function railWithFive() {
+    const made = setup();
+    made.store.commit((deck) => {
+      for (let n = 3; n <= 5; n++) {
+        deck.slides.push({
+          id: `slide-${n}`, name: '', background: { color: null, image: null },
+          notes: '', elements: [], timeline: [],
+        });
+      }
+    });
+    made.store.selectSlide(2);
+    return made;
+  }
+
+  const headers = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>('.rail-section')]
+    .map((header) => [
+      header.querySelector('.rail-section-name')?.textContent
+        ?? header.querySelector<HTMLInputElement>('.rail-section-rename')?.value,
+      header.querySelector('.rail-section-count')?.textContent,
+    ]);
+  const rows = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>('.rail-item')]
+    .map((row) => row.dataset.slideId);
+  const button = (host: HTMLElement, label: string) => [...host.querySelectorAll<HTMLButtonElement>('.rail-actions button')]
+    .find((candidate) => candidate.textContent === label)!;
+  const type = (input: HTMLInputElement, value: string, key: string) => {
+    input.value = value;
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  };
+  const flush = () => new Promise((settle) => setTimeout(settle, 0));
+
+  /** A section "Method" from the current (third) slide, named by typing. */
+  async function withMethodSection() {
+    const made = railWithFive();
+    button(made.host, '+ Section').click();
+    await flush();
+    const input = made.host.querySelector<HTMLInputElement>('.rail-section-rename')!;
+    expect(document.activeElement).toBe(input);
+    type(input, 'Method', 'Enter');
+    return made;
+  }
+
+  it('starts a section at the current slide, named straight away, with the slides before it under a default one', async () => {
+    const { host, store } = await withMethodSection();
+    expect(headers(host)).toEqual([['Default section', '2'], ['Method', '3']]);
+    expect(store.get().deck.sections.map((section) => section.name)).toEqual(['Default section', 'Method']);
+  });
+
+  it('renames on a double-click; Escape keeps the name, and typing never reaches the rail’s keys', async () => {
+    const { host, store } = await withMethodSection();
+    const name = [...host.querySelectorAll<HTMLElement>('.rail-section-name')][1];
+    name.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    let input = host.querySelector<HTMLInputElement>('.rail-section-rename')!;
+    type(input, 'Meth', 'Backspace');
+    expect(store.get().deck.slides).toHaveLength(5);
+    type(input, 'Nope', 'Escape');
+    expect(headers(host)[1][0]).toBe('Method');
+
+    [...host.querySelectorAll<HTMLElement>('.rail-section-name')][1]
+      .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    input = host.querySelector<HTMLInputElement>('.rail-section-rename')!;
+    type(input, 'Approach', 'Enter');
+    expect(headers(host)[1][0]).toBe('Approach');
+    store.undo();
+    expect(headers(host)[1][0]).toBe('Method');
+  });
+
+  // Found by the cross-context fuzz: a change arriving while a section is
+  // being named (a collaborator's edit, the server's echo) rebuilt the rail,
+  // took the field away mid-word, and its blur committed from inside the
+  // rebuild, which then tripped over its own removed nodes.
+  it('keeps the name field, and the typing in it, through a rebuild of the rail', async () => {
+    const { host, store } = railWithFive();
+    button(host, '+ Section').click();
+    await flush();
+    const input = host.querySelector<HTMLInputElement>('.rail-section-rename')!;
+    input.value = 'Meth';
+    expect(() => store.commit((deck) => { deck.slides[0].name = 'Elsewhere'; }, { label: 'Remote edit' }))
+      .not.toThrow();
+    expect(host.querySelector('.rail-section-rename')).toBe(input);
+    expect(input.value).toBe('Meth');
+    type(input, 'Method', 'Enter');
+    expect(headers(host)[1][0]).toBe('Method');
+  });
+
+  it('folds a section to its header and remembers it; picking one of its slides unfolds it', async () => {
+    const { host, store } = await withMethodSection();
+    store.selectSlide(0);
+    const toggle = host.querySelectorAll<HTMLButtonElement>('.rail-section-toggle')[1];
+    toggle.click();
+    expect(rows(host)).toEqual(['slide-1', 'slide-2']);
+    expect(host.querySelectorAll('.rail-section.folded')).toHaveLength(1);
+    expect(JSON.parse(window.localStorage.getItem('deckwerk.rail.collapsed-sections')!))
+      .toEqual([store.get().deck.sections[1].id]);
+
+    store.selectSlide(3);
+    expect(rows(host)).toContain('slide-4');
+    expect(host.querySelectorAll('.rail-section.folded')).toHaveLength(0);
+  });
+
+  it('keeps the section you fold folded around you', async () => {
+    const { host, store } = await withMethodSection();
+    store.selectSlide(3);
+    host.querySelectorAll<HTMLButtonElement>('.rail-section-toggle')[1].click();
+    expect(rows(host)).toEqual(['slide-1', 'slide-2']);
+    expect(store.get().slideIndex).toBe(3);
+  });
+
+  it('selects the whole section from its header', async () => {
+    const { host, store } = await withMethodSection();
+    host.querySelectorAll<HTMLElement>('.rail-section')[1]
+      .dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect([...store.get().slideSelection].sort()).toEqual(['slide-3', 'slide-4', 'slide-5']);
+    expect(store.get().slideIndex).toBe(2);
+    expect(host.querySelectorAll('.rail-section')[1].classList.contains('selected')).toBe(true);
+  });
+
+  it('puts slides dropped on a header at the start of that section', async () => {
+    const { host, store } = await withMethodSection();
+    const fire = (target: HTMLElement, kind: string) => {
+      const event = new Event(kind, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', {
+        value: { effectAllowed: '', dropEffect: '', setData: () => {}, getData: () => '', setDragImage: () => {} },
+      });
+      target.dispatchEvent(event);
+    };
+    store.selectSlide(0);
+    fire(host.querySelector<HTMLElement>('.rail-item[data-slide-id="slide-1"]')!, 'dragstart');
+    fire(host.querySelectorAll<HTMLElement>('.rail-section')[1], 'drop');
+    expect(store.get().deck.slides.map((slide) => slide.id)).toEqual(['slide-2', 'slide-1', 'slide-3', 'slide-4', 'slide-5']);
+    expect(headers(host)).toEqual([['Default section', '1'], ['Method', '4']]);
+  });
+
+  it('keeps a section when its first slide is deleted, and removes a section without losing slides', async () => {
+    const { host, store, rail } = await withMethodSection();
+    store.selectSlide(2);
+    rail.deleteSlide();
+    expect(headers(host)).toEqual([['Default section', '2'], ['Method', '2']]);
+
+    host.querySelectorAll<HTMLElement>('.rail-section')[1]
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    [...document.querySelectorAll<HTMLButtonElement>('#ctx-menu button')]
+      .find((item) => item.textContent === 'Remove section (keep slides)')!.click();
+    expect(headers(host)).toEqual([['Default section', '4']]);
+    expect(store.get().deck.slides).toHaveLength(4);
+  });
+});

@@ -79,6 +79,8 @@ export interface MeasuredSlide {
   background: { color: string | null; image: string | null };
   morphFromPrevious: boolean;
   morphDuration?: number;
+  /** `data-section`: the id of the deck section the slide is in. */
+  section?: string;
   /** `data-layout` on the section: a built-in layout or the id of one of the deck's own. */
   layout?: string;
   /** With `layout`: the section set its own background inline. */
@@ -733,6 +735,7 @@ export function slideFromMeasured(
     background: measured.background,
     ...(measured.morphFromPrevious ? { morphFromPrevious: true } : {}),
     ...(measured.morphDuration !== undefined ? { morphDuration: measured.morphDuration } : {}),
+    ...(measured.section ? { section: measured.section } : {}),
     elements,
     timeline,
   };
@@ -1025,6 +1028,7 @@ export function slideToHtml(slide: Slide, canvas: { w: number; h: number }): str
     + ` data-canvas="${canvas.w}x${canvas.h}"`
     + (slide.name ? ` data-name="${escape(slide.name)}"` : '')
     + (slide.layout ? ` data-layout="${slide.layout}"` : '')
+    + (slide.section ? ` data-section="${escape(slide.section)}"` : '')
     + (slide.morphFromPrevious ? ' data-morph-from-previous="true"' : '')
     + (slide.morphDuration !== undefined ? ` data-morph-duration="${slide.morphDuration}"` : '')
     + `${background}>\n${body}\n</section>\n`;

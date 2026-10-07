@@ -2223,6 +2223,72 @@ button.primary:hover:not(:disabled) { background: rgb(122 162 247 / 22%); }
 
 .rail-num { font: 10px var(--mono); color: var(--muted); }
 .rail-item.selected .rail-num { color: var(--accent); }
+
+/* Section headers: a fold triangle, the name, and the slide count. They sit
+   between the rows (not around them, which would rebuild every thumbnail). */
+.rail-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  margin: 8px 8px 4px;
+  padding: 2px 6px 2px 2px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text);
+  font: 600 11px var(--mono);
+  letter-spacing: .04em;
+  cursor: default;
+  user-select: none;
+}
+.rail-section:first-child { margin-top: 0; }
+.rail-section:hover { background: var(--panel-2); border-color: var(--line); }
+.rail-section.selected { background: rgb(122 162 247 / 7%); border-color: rgb(122 162 247 / 55%); }
+.rail-section.dragging { opacity: .4; }
+.rail-section.drop-into { box-shadow: inset 0 0 0 2px var(--accent); }
+.rail-section-toggle {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.rail-section-toggle:hover:not(:disabled) { background: none; color: var(--text); }
+.rail-section-toggle svg { transition: transform .12s ease; }
+.rail-section.folded .rail-section-toggle svg { transform: rotate(-90deg); }
+.rail-section-name {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.rail-section-count {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: 10px/16px var(--mono);
+  text-align: center;
+}
+.rail-section-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--text);
+  font: 600 11px var(--mono);
+}
+.rail-section-rename:focus { outline: none; }
 .rail-item.active .rail-num { color: var(--accent); }
 
 .rail-thumb {

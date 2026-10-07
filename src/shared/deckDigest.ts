@@ -1,3 +1,4 @@
+import { slideSections } from './sections.js';
 import type { Deck, Slide, SlideElement } from './deck.js';
 import { isTitleLayout, layoutChoices, resolveLayoutMaster } from './layoutMasters.js';
 
@@ -28,6 +29,8 @@ export interface SlideOutline {
   morphDuration: number;
   /** Kept in the deck but stepped over when presenting. */
   skipped: boolean;
+  /** The name of the section the slide is in (see sections.ts); null before the first. */
+  section: string | null;
 }
 
 export interface RoleUsage {
@@ -65,6 +68,8 @@ const TITLE_CLASSES = ['role-title', 'title'];
 const BODY_CLASSES = ['role-body', 'body'];
 
 export function deckOutline(deck: Deck): SlideOutline[] {
+  const names = new Map(deck.sections.map((section) => [section.id, section.name]));
+  const sections = slideSections(deck);
   return deck.slides.map((slide, index) => ({
     index,
     id: slide.id,
@@ -75,6 +80,7 @@ export function deckOutline(deck: Deck): SlideOutline[] {
     morphFromPrevious: slide.morphFromPrevious ?? false,
     morphDuration: slide.morphDuration ?? 1000,
     skipped: slide.skipped ?? false,
+    section: names.get(sections[index] ?? '') ?? null,
   }));
 }
 

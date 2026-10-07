@@ -139,7 +139,7 @@ type OpName =
   | 'click' | 'shift-click' | 'double-click text' | 'double-click image then text'
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
-  | 'cmd+a' | 'group toggle' | 'panel toggle';
+  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -391,6 +391,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.editing === null) add('theme apply', 1);
   add('grid toggle', 1);
   add('panel toggle', 1);
+  if (pre.editing === null) add('section fold', 3);
   add('undo', 2);
   add('redo', 1);
   add('undo round-trip', 1);
@@ -630,6 +631,38 @@ async function performOp(
       }
       return 'same';
     }
+    case 'section fold': {
+      // With no section yet, + Section starts one at the current slide and
+      // Escape keeps its default name; otherwise a section folds and unfolds.
+      // Either way no slide and no word changes.
+      const texts = await session.allTexts();
+      const slides = () => session.cdp.evaluate<number>(`document.querySelectorAll('#rail .rail-item').length`);
+      const hasSection = await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('#rail .rail-section'))`);
+      if (!hasSection) {
+        await session.cdp.evaluate(`(() => {
+          [...document.querySelectorAll('#rail .rail-actions button')].find((b) => b.textContent === '+ Section').click();
+          return true;
+        })()`);
+        await wait(120);
+        await session.key('Escape', 27);
+        await wait(80);
+        if (!(await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('#rail .rail-section'))`))) {
+          flag('routing', '+ Section did not start a section');
+        }
+      } else {
+        const before = await slides();
+        for (let fold = 0; fold < 2; fold++) {
+          await session.cdp.evaluate(`(() => { document.querySelector('#rail .rail-section-toggle').click(); return true; })()`);
+          await wait(80);
+        }
+        if ((await slides()) !== before) flag('routing', 'folding and unfolding a section lost rail rows');
+      }
+      const after = await session.allTexts();
+      for (const [id, text] of Object.entries(after)) {
+        if (texts[id] !== undefined && texts[id] !== text) flag('routing', `a section action changed ${id}'s text`);
+      }
+      return 'same';
+    }
     case 'panel toggle': {
       // ⌥⌘1 / ⌥⌘2 from wherever focus is, mid-edit included: the slide list
       // or sidebar goes away and comes back, and no word on the slide moves.
@@ -741,8 +774,15 @@ async function performOp(
       // selection and every word on the slide stay as they were.
       const frames = () => session.cdp.evaluate<number>(
         `document.querySelectorAll('#canvas .overlay-layer .group-frame').length`);
-      // Grouping needs two objects; take the whole slide when fewer are picked.
-      if (pre.selection.length < 2) await session.chord('a', 'KeyA', 65, MOD);
+      // Grouping needs two objects. Picked by clicking: ⌘A would select
+      // slides instead when the rail has focus (after a rail hop, say).
+      // The first click may take a whole group already, and a Shift-click on
+      // one of its own pieces would then deselect it.
+      if (pre.selection.length < 2) {
+        const [first, second] = targetsOn(pre);
+        await session.click(first);
+        if ((await frames()) === 0) await session.shiftClick(second);
+      }
       const picked = (await session.state()).selection;
       const before = await frames();
       const texts = await session.allTexts();

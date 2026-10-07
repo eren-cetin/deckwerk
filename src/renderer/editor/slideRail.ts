@@ -10,6 +10,17 @@ import { applySlideLayout } from './slideLayouts.js';
 import { newComment, openCommentsPopover, openCount } from './comments.js';
 import type { Deck, Slide } from '@shared/deck.js';
 import { sameSlideIgnoringNotes, type EditorStore } from './store.js';
+import {
+  addSection,
+  adoptSection,
+  pinSections,
+  pruneSections,
+  removeSection,
+  renameSection,
+  sectionRuns,
+  slideSections,
+  type SectionRun,
+} from '@shared/sections.js';
 
 /**
  * The slide list. Text-first rather than thumbnail-first: rendering live
@@ -20,6 +31,17 @@ import { sameSlideIgnoringNotes, type EditorStore } from './store.js';
 const THUMB_WIDTH = 168;
 /** Enough decoded thumbnails for the viewport plus generous scroll overscan. */
 const THUMB_CACHE_LIMIT = 40;
+/** Sections folded in the rail, by id, remembered between sessions. */
+const COLLAPSED_SECTIONS_KEY = 'deckwerk.rail.collapsed-sections';
+
+function readCollapsedSections(): Set<string> {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(COLLAPSED_SECTIONS_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
 
 export interface RailPresence {
   name: string;
@@ -40,7 +62,20 @@ export class SlideRail {
    * slide when the grabbed row is part of the selection. `grabbed` is the row
    * under the pointer, which stays current after the drop.
    */
-  private drag: { ids: Set<string>; grabbed: string } | null = null;
+  private drag: { ids: Set<string>; grabbed: string; section?: string } | null = null;
+  /** Sections folded to their header (see COLLAPSED_SECTIONS_KEY). */
+  private collapsedSections = readCollapsedSections();
+  /**
+   * The active slide inside a section the author folded. Selecting a slide
+   * in a folded section unfolds it, so the rail never hides where you are;
+   * folding the section you are in, or picking its header, is the exception
+   * until another slide is chosen.
+   */
+  private foldedActiveSlideId: string | null = null;
+  /** The section whose name is being edited in place. */
+  private renamingSection: string | null = null;
+  /** True while `render` is rebuilding the rail (see renameField's blur). */
+  private rendering = false;
   /** Off-screen node used as the drag image while reordering. */
   private dragImage: HTMLElement | null = null;
   /** The slides array last drawn, so a selection change can skip the rebuild. */
@@ -162,6 +197,9 @@ export class SlideRail {
     ) {
       this.collapsedActiveSlideId = null;
     }
+    if (this.foldedActiveSlideId !== null && activeSlide?.id !== this.foldedActiveSlideId) {
+      this.foldedActiveSlideId = null;
+    }
     // Pointer movement replaces the active slide on every frame. Rebuilding
     // the rail for those transient values detaches every thumbnail, briefly
     // blanking the whole sidebar. Keep the last committed previews mounted;
@@ -181,6 +219,14 @@ export class SlideRail {
     // Selecting a slide inside a collapsed run (keyboard navigation, agent
     // edits) must reveal it — its row doesn't exist until the run expands.
     if (!this.host.querySelector(`.rail-item[data-index="${slideIndex}"]`)) {
+      // In a section the author folded on purpose, the slide stays folded.
+      const activeId = this.store.get().deck.slides[slideIndex]?.id;
+      if (activeId && activeId === this.foldedActiveSlideId) {
+        this.highlightedSlideIndex = slideIndex;
+        this.highlightedSelection = new Set(slideSelection);
+        this.syncSectionSelection(slideSelection);
+        return;
+      }
       this.render();
       return;
     }
@@ -226,6 +272,18 @@ export class SlideRail {
     }
     this.highlightedSlideIndex = slideIndex;
     this.highlightedSelection = new Set(slideSelection);
+    this.syncSectionSelection(slideSelection);
+  }
+
+  /** A header is lit when every slide of its section is selected. */
+  private syncSectionSelection(slideSelection: Set<string>): void {
+    const deck = this.store.get().deck;
+    for (const header of this.host.querySelectorAll<HTMLElement>('.rail-section')) {
+      const start = Number(header.dataset.start);
+      const end = Number(header.dataset.end);
+      const all = deck.slides.slice(start, end + 1).every((slide) => slideSelection.has(slide.id));
+      header.classList.toggle('selected', all && slideSelection.size >= end - start + 1);
+    }
   }
 
   /** Show or hide the per-slide layout captions; the Design tab turns them on. */
@@ -234,6 +292,15 @@ export class SlideRail {
   }
 
   render(): void {
+    this.rendering = true;
+    try {
+      this.renderRail();
+    } finally {
+      this.rendering = false;
+    }
+  }
+
+  private renderRail(): void {
     const { deck, slideIndex, slideSelection } = this.store.get();
     this.renderedSlides = deck.slides;
     this.highlightedSlideIndex = slideIndex;
@@ -258,39 +325,27 @@ export class SlideRail {
     }
     const children: HTMLElement[] = [];
 
-    // Group consecutive hidden slides: runs of 2+ collapse to one placeholder
-    // unless expanded. A run holding the active slide normally stays expanded;
-    // an explicit bracket click may hide that row while preserving the editor.
-    for (let i = 0; i < deck.slides.length; ) {
-      if (!deck.slides[i].skipped) {
-        children.push(this.buildItem(deck, i, slideIndex, slideSelection));
-        i += 1;
-        continue;
+    // Each section under its header, folded or not; slides before the first
+    // section have no header.
+    for (const run of sectionRuns(deck)) {
+      if (run.section) {
+        const containsActive = slideIndex >= run.start && slideIndex <= run.end;
+        let folded = this.collapsedSections.has(run.section.id);
+        if (folded && containsActive && deck.slides[slideIndex]?.id !== this.foldedActiveSlideId) {
+          this.setSectionFolded(run.section.id, false);
+          folded = false;
+        }
+        children.push(this.buildSectionHeader(deck, run, folded, slideSelection));
+        if (folded) continue;
       }
-      let end = i;
-      while (end + 1 < deck.slides.length && deck.slides[end + 1].skipped) end += 1;
-      if (end === i) {
-        children.push(this.buildItem(deck, i, slideIndex, slideSelection));
-        i += 1;
-        continue;
-      }
-      const runKey = deck.slides[i].id;
-      const containsActive = slideIndex >= i && slideIndex <= end;
-      const explicitlyCollapsed = containsActive
-        && deck.slides[slideIndex]?.id === this.collapsedActiveSlideId;
-      if (!this.expandedRuns.has(runKey) && (!containsActive || explicitlyCollapsed)) {
-        children.push(this.buildCollapsedRun(deck, i, end, runKey, slideSelection));
-      } else {
-        this.expandedRuns.add(runKey);
-        children.push(this.buildExpandedRun(deck, i, end, runKey, slideIndex, slideSelection));
-      }
-      i = end + 1;
+      this.pushSlides(children, deck, run.start, run.end, slideIndex, slideSelection);
     }
 
     const actions = document.createElement('div');
     actions.className = 'rail-actions';
     actions.append(
       railButton('+ Slide', () => this.addSlide()),
+      railButton('+ Section', () => this.addSectionAtActive()),
       railButton('Duplicate', () => this.duplicateSlide()),
       railButton(
         deck.slides[slideIndex]?.skipped ? 'Show' : 'Hide',
@@ -300,6 +355,47 @@ export class SlideRail {
     );
     children.push(actions);
     this.patchChildren(children);
+  }
+
+  /**
+   * The slides `start`..`end` (one section's) as rows. Consecutive hidden
+   * slides fold into one placeholder, within the section: runs of 2+ collapse
+   * unless expanded. A run holding the active slide normally stays expanded;
+   * an explicit bracket click may hide that row while preserving the editor.
+   */
+  private pushSlides(
+    children: HTMLElement[],
+    deck: Deck,
+    start: number,
+    end: number,
+    slideIndex: number,
+    slideSelection: Set<string>,
+  ): void {
+    for (let i = start; i <= end; ) {
+      if (!deck.slides[i].skipped) {
+        children.push(this.buildItem(deck, i, slideIndex, slideSelection));
+        i += 1;
+        continue;
+      }
+      let last = i;
+      while (last + 1 <= end && deck.slides[last + 1].skipped) last += 1;
+      if (last === i) {
+        children.push(this.buildItem(deck, i, slideIndex, slideSelection));
+        i += 1;
+        continue;
+      }
+      const runKey = deck.slides[i].id;
+      const containsActive = slideIndex >= i && slideIndex <= last;
+      const explicitlyCollapsed = containsActive
+        && deck.slides[slideIndex]?.id === this.collapsedActiveSlideId;
+      if (!this.expandedRuns.has(runKey) && (!containsActive || explicitlyCollapsed)) {
+        children.push(this.buildCollapsedRun(deck, i, last, runKey, slideSelection));
+      } else {
+        this.expandedRuns.add(runKey);
+        children.push(this.buildExpandedRun(deck, i, last, runKey, slideIndex, slideSelection));
+      }
+      i = last + 1;
+    }
   }
 
   /**
@@ -619,6 +715,298 @@ export class SlideRail {
   }
 
   /** One slide row: number, cached thumbnail, hidden badge, handlers. */
+  private setSectionFolded(id: string, folded: boolean): void {
+    if (folded) this.collapsedSections.add(id);
+    else this.collapsedSections.delete(id);
+    try {
+      window.localStorage.setItem(COLLAPSED_SECTIONS_KEY, JSON.stringify([...this.collapsedSections].slice(-500)));
+    } catch {
+      // Remembering folds is a convenience; folding still works.
+    }
+  }
+
+  /** Fold or unfold a section; folding the one you are in keeps you there. */
+  private toggleSection(run: SectionRun, fold: boolean): void {
+    if (!run.section) return;
+    const { deck, slideIndex } = this.store.get();
+    if (fold && slideIndex >= run.start && slideIndex <= run.end) {
+      this.foldedActiveSlideId = deck.slides[slideIndex]?.id ?? null;
+    }
+    this.setSectionFolded(run.section.id, fold);
+    this.render();
+  }
+
+  private setAllSectionsFolded(fold: boolean): void {
+    const { deck, slideIndex } = this.store.get();
+    for (const run of sectionRuns(deck)) {
+      if (!run.section) continue;
+      if (fold && slideIndex >= run.start && slideIndex <= run.end) {
+        this.foldedActiveSlideId = deck.slides[slideIndex]?.id ?? null;
+      }
+      this.setSectionFolded(run.section.id, fold);
+    }
+
+    this.render();
+  }
+
+  /**
+   * A section's header: a disclosure triangle that folds it, its name
+   * (double-click to rename) and, folded, how many slides it holds. A click
+   * selects the whole section; dragging the header moves it.
+   */
+  private buildSectionHeader(deck: Deck, run: SectionRun, folded: boolean, slideSelection: Set<string>): HTMLElement {
+    const section = run.section!;
+    const count = run.end - run.start + 1;
+    // The header being renamed stays the same node: replacing it would take
+    // the field (and the author's typing) away mid-word.
+    const editing = this.renamingSection === section.id
+      ? [...this.host.querySelectorAll<HTMLElement>('.rail-section')]
+        .find((candidate) => candidate.dataset.sectionId === section.id) ?? null
+      : null;
+    if (editing?.querySelector('.rail-section-rename')) {
+      editing.dataset.start = String(run.start);
+      editing.dataset.end = String(run.end);
+      const shown = editing.querySelector('.rail-section-count');
+      if (shown) shown.textContent = String(count);
+      return editing;
+    }
+    const header = document.createElement('div');
+    header.className = `rail-section${folded ? ' folded' : ''}`;
+    header.dataset.sectionId = section.id;
+    header.dataset.start = String(run.start);
+    header.dataset.end = String(run.end);
+    header.draggable = this.renamingSection !== section.id;
+    header.setAttribute('role', 'heading');
+    header.setAttribute('aria-level', '2');
+    const selected = deck.slides.slice(run.start, run.end + 1).every((slide) => slideSelection.has(slide.id));
+    header.classList.toggle('selected', selected && slideSelection.size >= count);
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'rail-section-toggle';
+    toggle.setAttribute('aria-expanded', String(!folded));
+    toggle.setAttribute('aria-label', `${folded ? 'Expand' : 'Collapse'} ${section.name}`);
+    toggle.title = folded ? 'Expand section' : 'Collapse section';
+    toggle.innerHTML = '<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true">'
+      + '<path d="M2 3.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" '
+      + 'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    toggle.addEventListener('pointerdown', (event) => event.stopPropagation());
+    toggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.toggleSection(run, !folded);
+    });
+
+    const count_ = document.createElement('span');
+    count_.className = 'rail-section-count';
+    count_.textContent = String(count);
+    count_.title = `${count} slide${count === 1 ? '' : 's'}`;
+
+    if (this.renamingSection === section.id) {
+      header.append(toggle, this.renameField(section.id, section.name), count_);
+    } else {
+      const name = document.createElement('span');
+      name.className = 'rail-section-name';
+      name.textContent = section.name;
+      name.title = 'Double-click to rename';
+      name.addEventListener('dblclick', (event) => {
+        event.stopPropagation();
+        this.startRename(section.id);
+      });
+      header.append(toggle, name, count_);
+    }
+
+    header.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || (event.target as HTMLElement).closest('input')) return;
+      // The whole section, current on its first slide. A folded section
+      // stays folded around it.
+      const ids = deck.slides.slice(run.start, run.end + 1).map((slide) => slide.id);
+      if (folded) this.foldedActiveSlideId = ids[0];
+      this.store.setSlideSelection(ids, ids[0]);
+      this.onSlideActivate?.(run.start);
+      this.host.focus({ preventScroll: true });
+    });
+    header.addEventListener('contextmenu', (event) => this.onSectionMenu(event, run, folded));
+    this.bindSectionDrag(header, run);
+    return header;
+  }
+
+  private startRename(id: string): void {
+    this.renamingSection = id;
+    this.render();
+  }
+
+  /** The name, editable in place: Return or leaving the field keeps it, Escape does not. */
+  private renameField(id: string, current: string): HTMLInputElement {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rail-section-rename';
+    input.value = current;
+    input.setAttribute('aria-label', 'Section name');
+    let done = false;
+    const finish = (keep: boolean) => {
+      if (done) return;
+      done = true;
+      this.renamingSection = null;
+      const name = input.value.trim();
+      if (keep && name && name !== current) {
+        this.store.commit((deck) => renameSection(deck, id, name), { label: 'Rename section' });
+      } else {
+        this.render();
+      }
+    };
+    // The rail's own keys (Return adds a slide, Backspace deletes slides)
+    // must not see typing in the field.
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') finish(true);
+      else if (event.key === 'Escape') finish(false);
+    });
+    input.addEventListener('pointerdown', (event) => event.stopPropagation());
+    // Leaving the field keeps the name, but never from inside a rebuild of the
+    // rail: committing there would rebuild it again halfway through.
+    input.addEventListener('blur', () => {
+      if (this.rendering) queueMicrotask(() => finish(true));
+      else finish(true);
+    });
+    queueMicrotask(() => {
+      input.focus();
+      input.select();
+    });
+    return input;
+  }
+
+  /** Start a section at the current slide and name it straight away. */
+  addSectionAtActive(): void {
+    const { deck, slideIndex } = this.store.get();
+    const sections = slideSections(deck);
+    // Already the first slide of a section: name that one instead.
+    if (sections[slideIndex] && (slideIndex === 0 || sections[slideIndex - 1] !== sections[slideIndex])) {
+      this.startRename(sections[slideIndex]!);
+      return;
+    }
+    let id = '';
+    this.store.commit((next) => {
+      id = addSection(next, slideIndex, 'Untitled section');
+    }, { label: 'Add section' });
+    this.setSectionFolded(id, false);
+    this.startRename(id);
+  }
+
+  private onSectionMenu(ev: MouseEvent, run: SectionRun, folded: boolean): void {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const section = run.section!;
+    this.showMenu(ev, [
+      { label: 'Rename section', action: () => this.startRename(section.id) },
+      { label: folded ? 'Expand section' : 'Collapse section', action: () => this.toggleSection(run, !folded) },
+      'separator',
+      { label: 'Collapse all sections', action: () => this.setAllSectionsFolded(true) },
+      { label: 'Expand all sections', action: () => this.setAllSectionsFolded(false) },
+      'separator',
+      {
+        label: 'Remove section (keep slides)',
+        action: () => {
+          this.store.commit((deck) => removeSection(deck, section.id), { label: 'Remove section' });
+          this.setSectionFolded(section.id, false);
+        },
+      },
+    ]);
+  }
+
+  /** A context menu in the shared #ctx-menu chrome. */
+  private showMenu(ev: MouseEvent, items: Array<{ label: string; action: () => void } | 'separator'>): void {
+    document.getElementById('ctx-menu')?.remove();
+    const menu = document.createElement('div');
+    menu.id = 'ctx-menu';
+    for (const item of items) {
+      if (item === 'separator') {
+        const hr = document.createElement('div');
+        hr.className = 'ctx-sep';
+        menu.appendChild(hr);
+        continue;
+      }
+      const row = document.createElement('button');
+      row.textContent = item.label;
+      row.addEventListener('click', () => {
+        menu.remove();
+        item.action();
+      });
+      menu.appendChild(row);
+    }
+
+    openContextMenu(menu, { x: ev.clientX, y: ev.clientY });
+    menu.addEventListener('pointerdown', (event) => event.stopPropagation());
+    const close = () => menu.remove();
+    setTimeout(() => document.addEventListener('pointerdown', close, { once: true }), 0);
+  }
+
+  /**
+   * Drag a header to move its whole section; drop slides on a header to put
+   * them at the start of that section.
+   */
+  private bindSectionDrag(header: HTMLElement, run: SectionRun): void {
+    const sectionId = run.section!.id;
+    header.addEventListener('dragstart', (e) => {
+      const deck = this.store.get().deck;
+      const ids = new Set(deck.slides.slice(run.start, run.end + 1).map((slide) => slide.id));
+      this.drag = { ids, grabbed: deck.slides[run.start].id, section: sectionId };
+      e.dataTransfer?.setData('text/plain', run.section!.name);
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        const chip = this.makeDragImage(run.start, ids.size);
+        chip.textContent = run.section!.name;
+        e.dataTransfer.setDragImage(chip, 12, 10);
+      }
+      header.classList.add('dragging');
+    });
+    header.addEventListener('dragend', () => {
+      this.drag = null;
+      this.clearDragImage();
+      this.render();
+    });
+    header.addEventListener('dragover', (e) => {
+      if (!this.drag || this.drag.section === sectionId) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      header.classList.add('drop-into');
+    });
+    header.addEventListener('dragleave', () => header.classList.remove('drop-into'));
+    header.addEventListener('drop', (e) => {
+      e.preventDefault();
+      header.classList.remove('drop-into');
+      const drag = this.drag;
+      if (!drag || drag.section === sectionId) return;
+      this.drag = null;
+      // Slides go to the top of the section; a section goes just before it.
+      this.moveSlides(drag, run.start, drag.section ? null : sectionId);
+    });
+  }
+
+  /**
+   * Move the dragged slides to `insertAt` in one undoable step. A whole
+   * section keeps its own name; slides join `section` (the one they were
+   * dropped into), even when they did not change place.
+   */
+  private moveSlides(drag: { ids: Set<string>; grabbed: string; section?: string }, insertAt: number, section: string | null): void {
+    const before = this.store.get().deck;
+    const order = reorderSlides(before.slides, drag.ids, insertAt) ?? before.slides;
+    const sections = slideSections(before);
+    const joins = !drag.section && section !== null && before.slides
+      .some((slide, index) => drag.ids.has(slide.id) && sections[index] !== section);
+    if (order === before.slides && !joins) return;
+    const ids = order.map((slide) => slide.id);
+    this.store.commit((deck) => {
+      pinSections(deck);
+      const byId = new Map(deck.slides.map((slide) => [slide.id, slide]));
+      deck.slides = ids.map((id) => byId.get(id)!);
+      if (!drag.section && section) adoptSection(deck, drag.ids, section);
+      pruneSections(deck);
+    }, {
+      label: drag.section ? 'Move section' : drag.ids.size > 1 ? `Move ${drag.ids.size} slides` : 'Move slide',
+    });
+    this.store.setSlideSelection(drag.ids, drag.grabbed);
+  }
+
   private buildItem(
     deck: ReturnType<EditorStore['get']>['deck'],
     i: number,
@@ -759,6 +1147,7 @@ export class SlideRail {
       { label: hidden ? 'Show slide' : 'Hide slide', action: () => this.toggleHidden() },
       'separator',
       { label: 'Add slide below', action: () => this.addSlide() },
+      { label: 'Start a section here', action: () => this.addSectionAtActive() },
       { label: 'Duplicate', action: () => this.duplicateSlide() },
       'separator',
       { label: 'Delete', action: () => this.deleteSlide() },
@@ -919,16 +1308,16 @@ export class SlideRail {
       if (index === -1) return;
 
       const r = item.getBoundingClientRect();
-      const insertAt = e.clientY >= r.top + r.height / 2 ? index + 1 : index;
-      const order = reorderSlides(this.store.get().deck.slides, drag.ids, insertAt);
-      if (!order) return;
-
-      const ids = order.map((slide) => slide.id);
-      this.store.commit((deck) => {
-        const byId = new Map(deck.slides.map((slide) => [slide.id, slide]));
-        deck.slides = ids.map((id) => byId.get(id)!);
-      }, { label: drag.ids.size > 1 ? `Move ${drag.ids.size} slides` : 'Move slide' });
-      this.store.setSlideSelection(drag.ids, drag.grabbed);
+      const after = e.clientY >= r.top + r.height / 2;
+      const deck = this.store.get().deck;
+      const sections = slideSections(deck);
+      if (drag.section) {
+        // A whole section lands between sections, never inside one.
+        const run = sectionRuns(deck).find((candidate) => index >= candidate.start && index <= candidate.end)!;
+        this.moveSlides(drag, after ? run.end + 1 : run.start, null);
+        return;
+      }
+      this.moveSlides(drag, after ? index + 1 : index, sections[index]);
     });
   }
 
@@ -1060,12 +1449,16 @@ export class SlideRail {
     if (survivor) ids.delete(survivor);
     const first = Math.min(...doomed.map(({ index }) => index), slideIndex);
     this.store.commit((d) => {
+      // Slides after a deleted section start stay in their section.
+      pinSections(d);
       d.slides = d.slides.filter((slide) => !ids.has(slide.id));
+      pruneSections(d);
       if (!survivor) return;
       const kept = { ...blankSlide(), id: survivor };
       d.slides[0] = kept;
       applySlideLayout(kept, 'standard', d.layoutMasters, d.customLayouts);
       applyDeckThemeToNewSlide(d, 0);
+      pruneSections(d);
     }, { label: doomed.length === 1 ? 'Delete slide' : `Delete ${doomed.length} slides` });
     this.store.selectSlide(wholeDeck ? 0 : Math.max(0, first - 1));
   }

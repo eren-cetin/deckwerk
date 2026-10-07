@@ -1623,6 +1623,7 @@ export function measureSlides(doc: Document): MeasuredSlide[] {
       notes: root.dataset.notes ?? '',
       background: { color: background, image: image ? image[1] : null },
       morphFromPrevious: root.dataset.morphFromPrevious === 'true',
+      ...(root.dataset.section ? { section: root.dataset.section } : {}),
       ...(root.dataset.layout !== undefined ? {
         layout: root.dataset.layout,
         // Whether the section paints its own background, rather than wearing

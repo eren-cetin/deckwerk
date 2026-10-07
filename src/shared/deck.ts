@@ -446,6 +446,12 @@ export const SlideSchema = z.object({
   morphDuration: z.number().min(100).max(5000).optional(),
   /** Kept in the deck and editable, but stepped over when presenting. */
   skipped: z.boolean().optional(),
+  /**
+   * The id of the section (in `deck.sections`) this slide belongs to. A slide
+   * without one, or naming one the deck does not have, is in the section of
+   * the slide before it. See sections.ts.
+   */
+  section: Id.optional(),
   elements: z.array(ElementSchema).default([]),
   timeline: z.array(TimelineEntrySchema).default([]),
   /** Discussion attached to the slide as a whole; absent when there is none. */
@@ -512,6 +518,11 @@ export const DeckSchema = z.object({
   }).nullable().default(null),
   /** The deck's own layouts, in the order the layout editor lists them. */
   customLayouts: z.array(CustomLayoutSchema).default([]),
+  /**
+   * Named runs of slides, folded together in the slide rail. Order follows
+   * the slides; this only names them. See sections.ts.
+   */
+  sections: z.array(z.object({ id: Id, name: z.string() })).default([]),
   /** Deck-wide motion curve for Morph transitions. */
   morphEasing: z.enum(['ease-in-out', 'ease-out', 'linear']).default('ease-in-out'),
   slides: z.array(SlideSchema).default([]),
