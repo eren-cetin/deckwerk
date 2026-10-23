@@ -1768,13 +1768,15 @@ export class Inspector {
             table.caption.textContent = 'double-click to select cells';
             table.caption.hidden = false;
             table.caption.title =
-              'Double-click the table, then drag horizontally, vertically, or diagonally across cells.';
+              'Double-click the table, then drag across cells, or ⌘-click cells to pick them one by one.';
           } else {
             const rowStart = Math.min(selected.row, selected.rowEnd) + 1;
             const rowEnd = Math.max(selected.row, selected.rowEnd) + 1;
             const columnStart = Math.min(selected.column, selected.columnEnd) + 1;
             const columnEnd = Math.max(selected.column, selected.columnEnd) + 1;
-            const location = selected.mode === 'cell'
+            const location = selected.mode === 'cells'
+              ? `${selected.picked?.length ?? 0} cells`
+              : selected.mode === 'cell'
               ? `Row ${rowStart}, column ${columnStart}`
               : selected.mode === 'row'
                 ? `Row ${rowStart}, columns ${columnStart}–${columnEnd}`
@@ -1783,7 +1785,7 @@ export class Inspector {
                   : `Rows ${rowStart}–${rowEnd}, columns ${columnStart}–${columnEnd}`;
             table.caption.textContent = location;
             table.caption.hidden = false;
-            table.caption.title = 'Drag to select a rectangular range';
+            table.caption.title = 'Drag to select a rectangular range, or ⌘-click to pick cells';
             table.content.appendChild(colorField(
               'Cell fill', null,
               (value) => this.onApplyTableCellColor?.('backgroundColor', value),

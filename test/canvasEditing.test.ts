@@ -768,7 +768,7 @@ describe('inline text editing', () => {
     for (const cell of [a, c]) expect(cell.querySelector('span')?.style.color).toBe('rgb(0, 0, 255)');
   });
 
-  it('extends the cell selection with Shift-click, as a spreadsheet does', () => {
+  it('picks cells one at a time with Cmd/Ctrl-click, leaving the cells between them out', () => {
     const { store, canvas, host } = setup();
     store.select(['text-1']);
     store.updateSelected((element) => {
@@ -778,28 +778,41 @@ describe('inline text editing', () => {
       }
     });
     canvas.beginTextEdit('text-1');
-    const cells = bodyOf(host, 'text-1').querySelectorAll<HTMLTableCellElement>('td');
+    const body = bodyOf(host, 'text-1');
+    const cells = body.querySelectorAll<HTMLTableCellElement>('td');
+    const pick = (cell: HTMLTableCellElement, pointerId: number) => {
+      cell.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId, metaKey: true, ctrlKey: true,
+      }));
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId }));
+    };
+    const highlighted = () => [...body.querySelectorAll('.editor-table-selected')].map((cell) => cell.textContent);
     cells[0].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7 }));
     document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7 }));
-    cells[4].dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true, cancelable: true, pointerId: 8, shiftKey: true,
-    }));
-    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 8 }));
-    expect(canvas.tableSelectionInfo()).toMatchObject({
-      mode: 'range', row: 0, column: 0, rowEnd: 1, columnEnd: 1,
-    });
-    // A second Shift-click moves the far corner, keeping where it started.
-    cells[2].dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true, cancelable: true, pointerId: 9, shiftKey: true,
-    }));
-    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 }));
-    expect(canvas.tableSelectionInfo()).toMatchObject({
-      mode: 'row', row: 0, column: 0, rowEnd: 0, columnEnd: 2,
-    });
-    expect(bodyOf(host, 'text-1').querySelectorAll('.editor-table-selected')).toHaveLength(3);
+    pick(cells[2], 8);
+    pick(cells[4], 9);
+    expect(highlighted()).toEqual(['A', 'C', 'E']);
+    expect(canvas.tableSelectionInfo()).toMatchObject({ mode: 'cells', row: 1, column: 1 });
+
+    // A second Cmd/Ctrl-click takes a cell back out.
+    pick(cells[2], 10);
+    expect(highlighted()).toEqual(['A', 'E']);
+
+    canvas.applyTableCellColor('color', '#ff0000');
+    const html = (store.slide!.elements.find((element) => element.id === 'text-1') as { html: string }).html;
+    const saved = document.createElement('template');
+    saved.innerHTML = html;
+    expect([...saved.content.querySelectorAll('td')].map((cell) => cell.style.color))
+      .toEqual(['rgb(255, 0, 0)', '', '', '', 'rgb(255, 0, 0)', '']);
+
+    // A plain click starts over with one cell.
+    cells[5].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 11 }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 11 }));
+    expect(highlighted()).toEqual(['F']);
+    expect(canvas.tableSelectionInfo()?.picked).toBeUndefined();
   });
 
-  it('starts a Shift-click range from the cell holding the caret when no cells are selected', () => {
+  it('starts Cmd/Ctrl-click picking from the cell holding the caret when no cells are selected', () => {
     const { store, canvas, host } = setup();
     store.select(['text-1']);
     store.updateSelected((element) => {
@@ -808,19 +821,19 @@ describe('inline text editing', () => {
       }
     });
     canvas.beginTextEdit('text-1');
-    const cells = bodyOf(host, 'text-1').querySelectorAll<HTMLTableCellElement>('td');
-    // A double-clicked word: a text selection in the first cell, no cell range.
+    const body = bodyOf(host, 'text-1');
+    const cells = body.querySelectorAll<HTMLTableCellElement>('td');
+    // A double-clicked word: a text selection in the first cell, no cells.
     const word = document.createRange();
     word.selectNodeContents(cells[0].firstChild!);
     getSelection()!.removeAllRanges();
     getSelection()!.addRange(word);
     expect(canvas.tableSelectionInfo()).toBeNull();
     cells[3].dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true, cancelable: true, pointerId: 8, shiftKey: true,
+      bubbles: true, cancelable: true, pointerId: 8, metaKey: true, ctrlKey: true,
     }));
-    expect(canvas.tableSelectionInfo()).toMatchObject({
-      mode: 'range', row: 0, column: 0, rowEnd: 1, columnEnd: 1,
-    });
+    expect([...body.querySelectorAll('.editor-table-selected')].map((cell) => cell.textContent))
+      .toEqual(['A', 'D']);
   });
 
   it('never stores the editor-only table selection highlight', () => {

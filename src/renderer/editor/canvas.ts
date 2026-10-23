@@ -100,7 +100,8 @@ import { sameSlideIgnoringNotes, type EditorStore } from './store.js';
 
 export type TableSelection = {
   elementId: string;
-  mode: 'cell' | 'row' | 'column' | 'range';
+  /** `cells` is a set picked one by one with ⌘-click, listed in `picked`. */
+  mode: 'cell' | 'row' | 'column' | 'range' | 'cells';
   /** Anchor cell where the pointer drag began. */
   row: number;
   column: number;
@@ -109,6 +110,11 @@ export type TableSelection = {
   columnEnd: number;
   rows: number;
   columns: number;
+  /**
+   * The cells chosen one at a time, in the order they were picked; the last
+   * is also `row`/`column`, where row and column commands act.
+   */
+  picked?: Array<{ row: number; column: number }>;
 };
 
 type TableBorderEdge = 'top' | 'right' | 'bottom' | 'left';
@@ -3910,32 +3916,37 @@ export class EditorCanvas {
       }
       const point = tableCoordinates(cell);
       if (!point) return;
-      if (event.shiftKey && this.tableSelection?.elementId !== elementId) {
-        // No cell range yet (a double-click selects a word, not its cell):
-        // the range starts from the cell holding the caret or the selection.
+      if (commandModifier(event)) {
+        // ⌘-click picks cells one at a time, the way it picks objects: it
+        // adds a cell, or takes back one already picked, and leaves the
+        // cells in between alone.
+        event.preventDefault();
         const from = window.getSelection()?.anchorNode ?? null;
         const fromCell = (from instanceof Element ? from : from?.parentElement)
           ?.closest<HTMLTableCellElement>('td, th') ?? null;
-        const start = fromCell && body.contains(fromCell) ? tableCoordinates(fromCell) : null;
-        if (start) {
-          this.tableSelection = {
-            elementId, mode: 'cell', row: start.row, column: start.column,
-            rowEnd: start.row, columnEnd: start.column, rows: start.rows, columns: start.columns,
-          };
-        }
-      }
-      const anchor = this.tableSelection?.elementId === elementId ? this.tableSelection : null;
-      if (event.shiftKey && anchor) {
-        // Shift-click moves the far corner of the range and keeps where it
-        // started, as a spreadsheet does; a drag that follows carries on
-        // from the same corner.
-        event.preventDefault();
+        const caretCell = fromCell && body.contains(fromCell) ? tableCoordinates(fromCell) : null;
+        // What is already chosen: the picked cells, the dragged range, or
+        // after a double-click the cell holding the caret.
+        const picked = this.tableSelection?.elementId === elementId
+          ? this.selectedTableCells().map((chosen) => tableCoordinates(chosen)!)
+          : caretCell ? [caretCell] : [];
+        const at = picked.findIndex((chosen) => chosen.row === point.row && chosen.column === point.column);
+        if (at === -1) picked.push(point);
+        else if (picked.length > 1) picked.splice(at, 1);
+        const last = picked.at(-1)!;
         window.getSelection()?.removeAllRanges();
         this.textSelectionRange = null;
-        tableDrag = { pointerId: event.pointerId, row: anchor.row, column: anchor.column };
-        anchor.rowEnd = point.row;
-        anchor.columnEnd = point.column;
-        anchor.mode = tableRangeMode(anchor);
+        this.tableSelection = {
+          elementId,
+          mode: picked.length > 1 ? 'cells' : 'cell',
+          row: last.row,
+          column: last.column,
+          rowEnd: last.row,
+          columnEnd: last.column,
+          rows: point.rows,
+          columns: point.columns,
+          ...(picked.length > 1 ? { picked: picked.map(({ row, column }) => ({ row, column })) } : {}),
+        };
         this.syncTableSelectionHighlight();
         this.onTableSelectionChange?.();
         return;
@@ -6128,7 +6139,9 @@ export class EditorCanvas {
   }
 
   tableSelectionInfo(): TableSelection | null {
-    return this.tableSelection ? { ...this.tableSelection } : null;
+    const selected = this.tableSelection;
+    if (!selected) return null;
+    return { ...selected, ...(selected.picked ? { picked: selected.picked.map((cell) => ({ ...cell })) } : {}) };
   }
 
   tableBorderSettings(): TableBorderSettings {
@@ -6234,6 +6247,11 @@ export class EditorCanvas {
     const table = this.activeTable();
     const selected = this.tableSelection;
     if (!table || !selected) return [];
+    if (selected.picked) {
+      return selected.picked
+        .map(({ row, column }) => table.rows[row]?.cells[column])
+        .filter((cell): cell is HTMLTableCellElement => Boolean(cell));
+    }
     const rowStart = Math.min(selected.row, selected.rowEnd);
     const rowEnd = Math.max(selected.row, selected.rowEnd);
     const columnStart = Math.min(selected.column, selected.columnEnd);
@@ -6518,6 +6536,7 @@ export class EditorCanvas {
     selected.column = index;
     selected.columnEnd = index;
     selected.mode = 'cell';
+    delete selected.picked;
     selected.columns += 1;
     this.commitTableDom('Insert table column', (widths) => {
       const source = Math.max(0, Math.min(widths.length - 1, after ? index - 1 : index));
@@ -6540,6 +6559,7 @@ export class EditorCanvas {
     selected.columnEnd = selected.column;
     selected.rowEnd = selected.row;
     selected.mode = 'cell';
+    delete selected.picked;
     this.commitTableDom('Delete table column', (widths) => {
       const [removed = 0] = widths.splice(removedColumn, 1);
       const recipient = Math.min(removedColumn, widths.length - 1);

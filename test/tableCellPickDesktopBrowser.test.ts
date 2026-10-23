@@ -22,14 +22,14 @@ import {
 
 /**
  * Colouring several table cells at once in the real desktop app, with real
- * pointer input: double-click into the table, Shift-click another cell, and
- * the panel's Colour paints the text of every cell in between — including
+ * pointer input: double-click into the table, ⌘-click other cells, and the
+ * panel's Colour paints the text of exactly the cells picked — including
  * words that came with a colour of their own, which used to hide it.
  */
 
 const TABLE_ID = 'cell-range-table';
 const TABLE = `#canvas [data-element-id="${TABLE_ID}"] table`;
-const SHIFT = 8;
+const MOD = process.platform === 'darwin' ? 4 : 2;
 
 let workDir = '';
 let appProcess: ChildProcess | null = null;
@@ -44,8 +44,8 @@ afterEach(async () => {
   workDir = '';
 });
 
-describe.skipIf(!electronBinary)('table cell ranges in the desktop app', () => {
-  it('Shift-clicks a range of cells and colours their text', {
+describe.skipIf(!electronBinary)('picking table cells in the desktop app', () => {
+  it('⌘-clicks scattered cells and colours only their text', {
     retry: 2,
     timeout: 120_000,
   }, async () => {
@@ -92,17 +92,19 @@ describe.skipIf(!electronBinary)('table cell ranges in the desktop app', () => {
     const colours = () => editor!.evaluate<string[][]>(`[...document.querySelector('${TABLE}').rows]
       .map((row) => [...row.cells].map((cell) => getComputedStyle(cell.querySelector('span') ?? cell).color))`);
 
-    // Double-click into the first cell (it selects the word), then Shift-click
-    // the middle one.
+    // Double-click into the first cell (it selects the word), then ⌘-click
+    // the middle and the last one.
     const first = await centre(0, 0);
     await editor.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: first.x, y: first.y, button: 'none', buttons: 0 });
     await press(first.x, first.y, 1);
     await press(first.x, first.y, 2);
     await wait(300);
-    const middle = await centre(1, 1);
-    await press(middle.x, middle.y, 1, SHIFT);
+    for (const [r, c] of [[1, 1], [2, 2]] as const) {
+      const cell = await centre(r, c);
+      await press(cell.x, cell.y, 1, MOD);
+    }
     await eventually(async () => editor!.evaluate<number>(`document.querySelectorAll('${TABLE} .editor-table-selected').length`),
-      'Shift-click did not select the range of cells', (count) => count === 4);
+      '⌘-click did not pick the cells', (count) => count === 3);
 
     // The panel's Colour, white from the picker's neutrals.
     await editor.evaluate(`(() => {
@@ -115,11 +117,11 @@ describe.skipIf(!electronBinary)('table cell ranges in the desktop app', () => {
     const white = 'rgb(255, 255, 255)';
     const blue = 'rgb(0, 0, 255)';
     await eventually(colours, 'the selected cells did not take the colour',
-      (grid) => grid[0][0] === white && grid[1][1] === white);
+      (grid) => grid[0][0] === white && grid[2][2] === white);
     expect(await colours()).toEqual([
-      [white, white, blue],
-      [white, white, blue],
-      [blue, blue, blue],
+      [white, blue, blue],
+      [blue, white, blue],
+      [blue, blue, white],
     ]);
   });
 });
