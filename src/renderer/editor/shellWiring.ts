@@ -320,6 +320,20 @@ export function bindEditorKeys(deps: ShellDeps, clipboard: ClipboardActions): vo
     e.stopPropagation();
     deps.togglePanel(e.code === 'Digit1' ? 'rail' : 'side');
   }, true);
+  // ⇧⌘V pastes the clipboard's plain text in the style at the caret, in a
+  // text box, the notes or any field. Capture phase, like find, because a
+  // live text edit stops keys from bubbling. Elsewhere it is an ordinary paste.
+  window.addEventListener('keydown', (e) => {
+    const pasteAndMatchStyle = (window.api as Partial<Window['api']>).pasteAndMatchStyle;
+    if (!pasteAndMatchStyle || !(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return;
+    if (e.code !== 'KeyV') return;
+    const t = e.target instanceof HTMLElement ? e.target : null;
+    if (!canvas.isEditing() && !t?.isContentEditable && !t?.matches('input, textarea')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    canvas.expectPlainPaste();
+    void pasteAndMatchStyle();
+  }, true);
   window.addEventListener('keydown', (e) => {
     if (!deps.openFind || document.querySelector('[aria-modal="true"]')) return;
     if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'f') return;

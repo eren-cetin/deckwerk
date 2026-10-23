@@ -9,9 +9,9 @@ import { IPC } from '@shared/ipc.js';
  * Show Grid's checkmark is owned by the editor window (it remembers the
  * choice), which reports it through `setShowGridChecked`. The ⌘' key is
  * handled by the page itself so it also works while text is being edited;
- * the menu shows it and handles a click. Arrange's ⌘G and ⇧⌘G are the
- * page's keys in the same way. File's template items open the editor's own
- * template dialogs.
+ * the menu shows it and handles a click. Edit's Paste and Match Style (⇧⌘V)
+ * and Arrange's ⌘G and ⇧⌘G are the page's keys in the same way. File's
+ * template items open the editor's own template dialogs.
  */
 
 const SHOW_GRID_ID = 'show-grid';
@@ -61,7 +61,31 @@ export function installAppMenu(actions: AppMenuActions): void {
         isMac ? { role: 'close' } : { role: 'quit' },
       ],
     },
-    { role: 'editMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        // ⇧⌘V, where the Mac's own ⌥⇧⌘V is hard to reach. The page owns the
+        // key (it needs to know a paste is meant plain); the menu shows it.
+        { role: 'pasteAndMatchStyle', accelerator: 'Shift+CmdOrCtrl+V', registerAccelerator: false },
+        { role: 'delete' },
+        { role: 'selectAll' },
+        ...(isMac
+          ? [
+            { type: 'separator' as const },
+            {
+              label: 'Speech',
+              submenu: [{ role: 'startSpeaking' as const }, { role: 'stopSpeaking' as const }],
+            },
+          ]
+          : []),
+      ],
+    },
     {
       label: 'View',
       submenu: [

@@ -851,6 +851,8 @@ export class EditorCanvas {
     start: Element | null;
     end: Element | null;
   } | null = null;
+  /** The next paste into the text being edited is ⇧⌘V's plain text. */
+  private plainPastePending = false;
   /** Last non-collapsed browser selection inside the active text element. */
   private textSelectionRange: Range | null = null;
   /** Rectangular cell range currently targeted in the live table editor. */
@@ -3711,6 +3713,10 @@ export class EditorCanvas {
     const onPaste = (event: ClipboardEvent) => {
       const pasted = event.clipboardData?.getData('text/html') ?? '';
       const plainText = event.clipboardData?.getData('text/plain') ?? '';
+      // Chromium hands a match-style paste only the plain text and inserts it
+      // in the caret's style itself; a tabbed line must not become a table.
+      const matchStyle = this.plainPastePending;
+      this.plainPastePending = false;
 
       // A line copied whole (nothing selected) goes back in whole, above the
       // caret's line, the way code editors paste a copied line.
@@ -3744,6 +3750,7 @@ export class EditorCanvas {
         }
       }
 
+      if (matchStyle) return;
       const tableData = pastedTableData(pasted, plainText);
       const safeTable = tableData?.html ?? null;
       if (!safeTable || !tableData) return;
@@ -5219,6 +5226,14 @@ export class EditorCanvas {
     const rendered = fresh.querySelector<HTMLElement>('.text-content');
     if (!rendered || rendered.innerHTML === body.innerHTML) return;
     node.replaceWith(fresh);
+  }
+
+  /**
+   * Mark the paste about to arrive as Paste and Match Style, so the text goes
+   * in as typed text even when it reads like a spreadsheet range.
+   */
+  expectPlainPaste(): void {
+    this.plainPastePending = this.editingId !== null;
   }
 
   /** True while a text element is being edited, so callers can defer redraws. */

@@ -70,6 +70,8 @@ export const IPC = {
   templateTake: 'template:take',
   /** Editor → main: open another, empty editor window. */
   windowNew: 'window:new',
+  /** Editor → main: paste the clipboard's plain text in the caret's style. */
+  editPasteAndMatchStyle: 'edit:pasteAndMatchStyle',
   /** Editor → main: show the open deck's folder in the file manager. */
   deckRevealFolder: 'deck:revealFolder',
   /** Main → editor: View › Show Slide List / Show Sidebar was chosen. */

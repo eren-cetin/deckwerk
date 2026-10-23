@@ -686,6 +686,10 @@ function registerHandlers(): void {
     openEmptyWindow(BrowserWindow.fromWebContents(event.sender));
   });
 
+  ipcMain.handle(IPC.editPasteAndMatchStyle, (event): void => {
+    event.sender.pasteAndMatchStyle();
+  });
+
   ipcMain.handle(IPC.deckRevealFolder, async (event): Promise<void> => {
     const error = await shell.openPath(requireSession(event).dir);
     if (error) throw new Error(error);

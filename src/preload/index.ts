@@ -89,6 +89,8 @@ const api = {
 
   /** Open another, empty editor window (File › New Window). */
   newWindow: (): Promise<void> => ipcRenderer.invoke(IPC.windowNew),
+  /** Paste the clipboard as plain text into the focused field, in its style. */
+  pasteAndMatchStyle: (): Promise<void> => ipcRenderer.invoke(IPC.editPasteAndMatchStyle),
   /** Show the open deck's folder in Finder (or the platform's file manager). */
   revealDeckFolder: (): Promise<void> => ipcRenderer.invoke(IPC.deckRevealFolder),
   /** The user's home folder, so paths can be shown as ~/…. */
