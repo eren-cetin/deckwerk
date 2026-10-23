@@ -734,6 +734,95 @@ describe('inline text editing', () => {
     expect(canvas.tableSelectionInfo()?.columns).toBe(2);
   });
 
+  it('colours the text of selected cells even where their words carry a colour of their own', () => {
+    const { store, canvas, host } = setup();
+    store.select(['text-1']);
+    store.updateSelected((element) => {
+      if (element.type === 'text') {
+        const run = (text: string) => `<span style="color: rgb(0, 0, 255); font-weight: 700;">${text}</span>`;
+        element.html = `<table><tbody><tr><td>${run('A')}</td><td>${run('B')}</td></tr>`
+          + `<tr><td>${run('C')}</td><td><p style="color: rgb(0, 0, 255);">D</p></td></tr></tbody></table>`;
+      }
+    });
+    canvas.beginTextEdit('text-1');
+    const cells = bodyOf(host, 'text-1').querySelectorAll<HTMLTableCellElement>('td');
+    cells[1].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7 }));
+    cells[3].dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, cancelable: true, pointerId: 7,
+    }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7 }));
+
+    canvas.applyTableCellColor('color', '#ff0000');
+    const html = (store.slide!.elements.find((element) => element.id === 'text-1') as { html: string }).html;
+    const saved = document.createElement('template');
+    saved.innerHTML = html;
+    const [a, b, c, d] = saved.content.querySelectorAll('td');
+    // The chosen colour is the cells', and nothing inside them overrides it;
+    // the bold the words had stays.
+    for (const cell of [b, d]) {
+      expect(cell.style.color).toBe('rgb(255, 0, 0)');
+      expect(cell.querySelector('[style*="color"]')).toBeNull();
+    }
+    expect(b.querySelector('span')?.style.fontWeight).toBe('700');
+    // Cells outside the selection keep their own colour.
+    for (const cell of [a, c]) expect(cell.querySelector('span')?.style.color).toBe('rgb(0, 0, 255)');
+  });
+
+  it('extends the cell selection with Shift-click, as a spreadsheet does', () => {
+    const { store, canvas, host } = setup();
+    store.select(['text-1']);
+    store.updateSelected((element) => {
+      if (element.type === 'text') {
+        element.html = '<table><tbody><tr><td>A</td><td>B</td><td>C</td></tr>'
+          + '<tr><td>D</td><td>E</td><td>F</td></tr></tbody></table>';
+      }
+    });
+    canvas.beginTextEdit('text-1');
+    const cells = bodyOf(host, 'text-1').querySelectorAll<HTMLTableCellElement>('td');
+    cells[0].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7 }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7 }));
+    cells[4].dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, pointerId: 8, shiftKey: true,
+    }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 8 }));
+    expect(canvas.tableSelectionInfo()).toMatchObject({
+      mode: 'range', row: 0, column: 0, rowEnd: 1, columnEnd: 1,
+    });
+    // A second Shift-click moves the far corner, keeping where it started.
+    cells[2].dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, pointerId: 9, shiftKey: true,
+    }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 }));
+    expect(canvas.tableSelectionInfo()).toMatchObject({
+      mode: 'row', row: 0, column: 0, rowEnd: 0, columnEnd: 2,
+    });
+    expect(bodyOf(host, 'text-1').querySelectorAll('.editor-table-selected')).toHaveLength(3);
+  });
+
+  it('starts a Shift-click range from the cell holding the caret when no cells are selected', () => {
+    const { store, canvas, host } = setup();
+    store.select(['text-1']);
+    store.updateSelected((element) => {
+      if (element.type === 'text') {
+        element.html = '<table><tbody><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></tbody></table>';
+      }
+    });
+    canvas.beginTextEdit('text-1');
+    const cells = bodyOf(host, 'text-1').querySelectorAll<HTMLTableCellElement>('td');
+    // A double-clicked word: a text selection in the first cell, no cell range.
+    const word = document.createRange();
+    word.selectNodeContents(cells[0].firstChild!);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(word);
+    expect(canvas.tableSelectionInfo()).toBeNull();
+    cells[3].dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, pointerId: 8, shiftKey: true,
+    }));
+    expect(canvas.tableSelectionInfo()).toMatchObject({
+      mode: 'range', row: 0, column: 0, rowEnd: 1, columnEnd: 1,
+    });
+  });
+
   it('never stores the editor-only table selection highlight', () => {
     const { store, canvas, host } = setup();
     store.select(['text-1']);

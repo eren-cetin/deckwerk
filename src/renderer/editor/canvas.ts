@@ -653,6 +653,34 @@ function normalizeInlineStyleSpans(root: HTMLElement): void {
     parent.normalize();
   }
 }
+/**
+ * Make a cell's own declaration of `property` the one that shows: remove it
+ * from the runs and paragraphs inside the cell, which would otherwise paint
+ * over it (text pasted or authored with its own colour ignored the cell's).
+ * Proportional sizes stay, since a superscript's `0.7em` follows the cell.
+ */
+function clearCellRunOverrides(
+  cell: HTMLElement,
+  property: 'color' | 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle'
+    | 'textDecorationLine' | 'textAlign',
+): void {
+  let changed = false;
+  for (const inner of cell.querySelectorAll<HTMLElement>('[style]')) {
+    const value = inner.style[property];
+    if (!value || (property === 'fontSize' && isRelativeFontSize(value))) continue;
+    inner.style[property] = '';
+    if (!inner.getAttribute('style')?.trim()) inner.removeAttribute('style');
+    changed = true;
+  }
+  if (changed) normalizeInlineStyleSpans(cell);
+}
+
+/** What a rectangular cell range spans, read from its two corners. */
+function tableRangeMode(range: Pick<TableSelection, 'row' | 'column' | 'rowEnd' | 'columnEnd'>): TableSelection['mode'] {
+  if (range.rowEnd === range.row) return range.columnEnd === range.column ? 'cell' : 'row';
+  return range.columnEnd === range.column ? 'column' : 'range';
+}
+
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
 const ZOOM_STEP = 0.25;
@@ -3882,6 +3910,36 @@ export class EditorCanvas {
       }
       const point = tableCoordinates(cell);
       if (!point) return;
+      if (event.shiftKey && this.tableSelection?.elementId !== elementId) {
+        // No cell range yet (a double-click selects a word, not its cell):
+        // the range starts from the cell holding the caret or the selection.
+        const from = window.getSelection()?.anchorNode ?? null;
+        const fromCell = (from instanceof Element ? from : from?.parentElement)
+          ?.closest<HTMLTableCellElement>('td, th') ?? null;
+        const start = fromCell && body.contains(fromCell) ? tableCoordinates(fromCell) : null;
+        if (start) {
+          this.tableSelection = {
+            elementId, mode: 'cell', row: start.row, column: start.column,
+            rowEnd: start.row, columnEnd: start.column, rows: start.rows, columns: start.columns,
+          };
+        }
+      }
+      const anchor = this.tableSelection?.elementId === elementId ? this.tableSelection : null;
+      if (event.shiftKey && anchor) {
+        // Shift-click moves the far corner of the range and keeps where it
+        // started, as a spreadsheet does; a drag that follows carries on
+        // from the same corner.
+        event.preventDefault();
+        window.getSelection()?.removeAllRanges();
+        this.textSelectionRange = null;
+        tableDrag = { pointerId: event.pointerId, row: anchor.row, column: anchor.column };
+        anchor.rowEnd = point.row;
+        anchor.columnEnd = point.column;
+        anchor.mode = tableRangeMode(anchor);
+        this.syncTableSelectionHighlight();
+        this.onTableSelectionChange?.();
+        return;
+      }
       // A fresh cell gesture invalidates any character Range from a previous
       // cell. If this gesture stays inside the cell, selectionchange will
       // replace it with the newly highlighted word/characters.
@@ -3935,9 +3993,7 @@ export class EditorCanvas {
       body.classList.add('table-cell-dragging');
       this.tableSelection.rowEnd = point.row;
       this.tableSelection.columnEnd = point.column;
-      this.tableSelection.mode = point.row === tableDrag.row
-        ? (point.column === tableDrag.column ? 'cell' : 'row')
-        : point.column === tableDrag.column ? 'column' : 'range';
+      this.tableSelection.mode = tableRangeMode(this.tableSelection);
       this.syncTableSelectionHighlight();
       this.onTableSelectionChange?.();
     };
@@ -6262,6 +6318,7 @@ export class EditorCanvas {
     for (const cell of cells) {
       cell.style[property] = value ?? '';
       if (!cell.getAttribute('style')?.trim()) cell.removeAttribute('style');
+      if (property === 'color') clearCellRunOverrides(cell, 'color');
     }
     this.commitTableDom(property === 'color' ? 'Change table text colour' : 'Change table cell colour');
   }
@@ -6276,6 +6333,9 @@ export class EditorCanvas {
     for (const cell of cells) {
       cell.style[property] = value ?? '';
       if (!cell.getAttribute('style')?.trim()) cell.removeAttribute('style');
+      // A run's vertical-align is its superscript or subscript, not the
+      // cell's alignment, so that one stays.
+      if (property !== 'verticalAlign') clearCellRunOverrides(cell, property);
     }
     this.commitTableDom('Change table cell typography');
     return true;
