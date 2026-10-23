@@ -139,7 +139,7 @@ type OpName =
   | 'click' | 'shift-click' | 'double-click text' | 'double-click image then text'
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
-  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold';
+  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -391,6 +391,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.editing === null) add('theme apply', 1);
   add('grid toggle', 1);
   add('panel toggle', 1);
+  add('path menu', 1);
   if (pre.editing === null) add('section fold', 3);
   add('undo', 2);
   add('redo', 1);
@@ -489,8 +490,12 @@ async function performOp(
         await wait(150);
         await session.dragRail(0, 1, 'after');
       } else if (next() < 0.5) {
+        // A lone slide: an earlier Cmd+A in the rail may have left both
+        // selected, which would make this a group drag.
+        await session.clickRail(0);
         await session.dragRail(0, 1, 'after');
       } else {
+        await session.clickRail(1);
         await session.dragRail(1, 0, 'before');
       }
       const after = await order();
@@ -660,6 +665,33 @@ async function performOp(
       const after = await session.allTexts();
       for (const [id, text] of Object.entries(after)) {
         if (texts[id] !== undefined && texts[id] !== text) flag('routing', `a section action changed ${id}'s text`);
+      }
+      return 'same';
+    }
+    case 'path menu': {
+      // The deck folder's menu opens from the toolbar wherever focus is, edits
+      // included, and a press elsewhere puts it away with nothing changed.
+      const texts = await session.allTexts();
+      const visible = await session.cdp.evaluate<boolean>(`(() => {
+        // The browser client's label is the server's deck name, plain text.
+        const label = document.querySelector('button.bar-deck-name');
+        return Boolean(label) && getComputedStyle(label).display !== 'none';
+      })()`);
+      if (visible) {
+        await session.cdp.click('.bar-deck-name', 'deck folder');
+        await wait(80);
+        const rows = await session.cdp.evaluate<string[]>(
+          `[...document.querySelectorAll('#ctx-menu button')].map((row) => row.textContent)`);
+        if (rows.join() !== 'Show in Finder,Copy path') flag('routing', `the deck folder menu offered ${rows.join(', ') || 'nothing'}`);
+        await session.cdp.evaluate(`(document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })), true)`);
+        await wait(80);
+        if (await session.cdp.evaluate<boolean>(`Boolean(document.getElementById('ctx-menu'))`)) {
+          flag('routing', 'the deck folder menu stayed open after a press elsewhere');
+        }
+      }
+      const after = await session.allTexts();
+      for (const [id, text] of Object.entries(after)) {
+        if (texts[id] !== undefined && texts[id] !== text) flag('routing', `the deck folder menu changed ${id}'s text`);
       }
       return 'same';
     }

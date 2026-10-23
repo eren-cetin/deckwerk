@@ -1,3 +1,5 @@
+import { openContextMenu } from './contextMenuPlacement.js';
+import { deckPathParts } from './deckPath.js';
 import { PanelToggles } from './panelToggles.js';
 import { applyTemplateToDeck } from '@shared/deckTemplates.js';
 import { confirmReplaceTemplate, showTemplateNameDialog, showTemplatePicker } from './templateDialogs.js';
@@ -427,14 +429,55 @@ function barDivider(): HTMLElement {
 }
 
 /** The open deck's name beside the logo: its folder name, or its title. */
+/**
+ * The deck's folder in the toolbar: the path to it, home shortened to ~,
+ * trimmed from the left when long so its own name always shows. A click
+ * offers to show the folder in Finder or copy its path.
+ */
 function syncDeckNameLabel(): void {
   if (!deckNameLabel) return;
   const { deck, dir } = store.get();
-  const folder = dir ? dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '' : '';
-  const name = folder || deck.title || '';
-  deckNameLabel.textContent = name;
-  deckNameLabel.hidden = name === '';
-  deckNameLabel.title = dir ?? '';
+  const { parent, name } = deckPathParts(dir, window.api.homeDir);
+  const shown = name || deck.title || '';
+  deckNameLabel.hidden = shown === '';
+  deckNameLabel.title = dir ? `${dir}\nClick to show in Finder or copy the path` : '';
+  deckNameLabel.setAttribute('aria-label', dir ? `Deck folder ${dir}` : shown);
+  const parentNode = deckNameLabel.querySelector<HTMLElement>('.bar-deck-parent > bdi')!;
+  parentNode.textContent = parent;
+  deckNameLabel.querySelector<HTMLElement>('.bar-deck-parent')!.hidden = parent === '';
+  deckNameLabel.querySelector<HTMLElement>('.bar-deck-folder')!.textContent = shown;
+}
+
+function openDeckPathMenu(anchor: HTMLElement): void {
+  const dir = store.get().dir;
+  if (!dir) return;
+  document.getElementById('ctx-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.id = 'ctx-menu';
+  const item = (label: string, action: () => void) => {
+    const row = document.createElement('button');
+    row.textContent = label;
+    row.addEventListener('click', () => {
+      menu.remove();
+      action();
+    });
+    menu.appendChild(row);
+  };
+  item('Show in Finder', () => {
+    void window.api.revealDeckFolder().catch((err: unknown) => {
+      setStatusMessage(`Could not show the folder: ${err instanceof Error ? err.message : err}`);
+    });
+  });
+  item('Copy path', () => {
+    void navigator.clipboard.writeText(dir).then(
+      () => setStatusMessage('Copied the deck folder’s path'),
+      () => setStatusMessage('Could not copy the path'),
+    );
+  });
+  const box = anchor.getBoundingClientRect();
+  openContextMenu(menu, { x: box.left, y: box.bottom + 4 });
+  menu.addEventListener('pointerdown', (event) => event.stopPropagation());
+  setTimeout(() => document.addEventListener('pointerdown', () => menu.remove(), { once: true }), 0);
 }
 
 function buildToolbar(): void {
@@ -443,8 +486,18 @@ function buildToolbar(): void {
 
   const left = document.createElement('div');
   left.className = 'bar-group';
-  deckNameLabel = document.createElement('span');
-  deckNameLabel.className = 'bar-deck-name';
+  const pathButton = document.createElement('button');
+  pathButton.type = 'button';
+  pathButton.className = 'bar-deck-name';
+  deckNameLabel = pathButton;
+  // The parent folders, then the deck's own folder, which never truncates.
+  const parentPath = document.createElement('span');
+  parentPath.className = 'bar-deck-parent';
+  parentPath.appendChild(document.createElement('bdi'));
+  const folderName = document.createElement('span');
+  folderName.className = 'bar-deck-folder';
+  pathButton.append(parentPath, folderName);
+  pathButton.addEventListener('click', () => openDeckPathMenu(pathButton));
   const fileActions = document.createElement('span');
   fileActions.className = 'toolbar-expanded-file-actions';
   const importEntries = [
@@ -474,6 +527,7 @@ function buildToolbar(): void {
       options: [
         { label: 'New', action: newPresentation },
         { label: 'New from Template…', action: () => void newFromTemplate() },
+        { label: 'New Window', action: () => void window.api.newWindow() },
         { label: 'Open…', action: openPresentation },
       ],
     },

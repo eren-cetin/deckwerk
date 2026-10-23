@@ -397,6 +397,16 @@ function openDeckForRequester(
 }
 
 /** A new editor window, registered as a document before its renderer loads. */
+/**
+ * File › New Window: another editor window on the welcome screen, stepped
+ * down and to the right of the one it was asked from so both stay visible.
+ */
+function openEmptyWindow(from?: BrowserWindow | null): DeckWindowState {
+  const source = from && !from.isDestroyed() ? from : BrowserWindow.getFocusedWindow();
+  const state = createEditorState('', source ? cascadedEditorBounds(source) : undefined);
+  return state;
+}
+
 function createEditorState(query = '', bounds?: WindowContinuityState): DeckWindowState {
   const win = createEditorWindow(query, bounds);
   const state = registerEditorWindow(win);
@@ -603,7 +613,7 @@ app.whenReady().then(async () => {
 
   installAssetProtocol();
   registerHandlers();
-  installAppMenu();
+  installAppMenu({ newWindow: (from) => openEmptyWindow(from) });
 
   const initial = deckDirFromArgv();
   const deck = initial
@@ -670,6 +680,15 @@ function registerHandlers(): void {
     const deck = await createDeck(dir, basename(dir));
     reportOperation(event, operationId, 'Preparing the new presentation', 1);
     return openDeckForRequester(requireOwner(event), dir, deck, event);
+  });
+
+  ipcMain.handle(IPC.windowNew, (event): void => {
+    openEmptyWindow(BrowserWindow.fromWebContents(event.sender));
+  });
+
+  ipcMain.handle(IPC.deckRevealFolder, async (event): Promise<void> => {
+    const error = await shell.openPath(requireSession(event).dir);
+    if (error) throw new Error(error);
   });
 
   ipcMain.handle(IPC.templateList, async (): Promise<TemplateSummary[]> => listTemplates());

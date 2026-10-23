@@ -40,7 +40,7 @@ async function toolbarAt(
   await editor!.cdp.evaluate(`(() => {
     const toolbar = document.getElementById('toolbar');
     toolbar.style.width = '${width}px';
-    document.querySelector('.bar-deck-name').textContent =
+    document.querySelector('.bar-deck-folder').textContent =
       'An intentionally long presentation name that exercises responsive toolbar measurement';
   })()`);
   return (await eventually(

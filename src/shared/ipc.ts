@@ -68,6 +68,10 @@ export const IPC = {
   templateDelete: 'template:delete',
   templateNew: 'template:new',
   templateTake: 'template:take',
+  /** Editor → main: open another, empty editor window. */
+  windowNew: 'window:new',
+  /** Editor → main: show the open deck's folder in the file manager. */
+  deckRevealFolder: 'deck:revealFolder',
   /** Main → editor: View › Show Slide List / Show Sidebar was chosen. */
   viewTogglePanel: 'view:togglePanel',
   /** Editor → main: which panels are showing, for the menu's checkmarks. */

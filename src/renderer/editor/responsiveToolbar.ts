@@ -1,4 +1,5 @@
 const LAYOUT_CLASSES = [
+  'toolbar-short-deck-path',
   'toolbar-hide-deck-name',
   'toolbar-compact-file',
   'toolbar-compact-secondary',
@@ -39,10 +40,39 @@ function flowingGroupsFit(toolbar: HTMLElement): boolean {
   return groups.reduce((sum, group) => sum + visibleWidth(group), gaps) <= available;
 }
 
+/** Narrower than this, the path is not worth showing beside the folder's name. */
+const MIN_DECK_PATH = 160;
+
+/**
+ * Give the deck's folder path the room left of the centred Insert group, so
+ * it trims its leading folders rather than disappearing. False when there is
+ * too little room for that to be worth it.
+ */
+function fitDeckPath(toolbar: HTMLElement): boolean {
+  const label = toolbar.querySelector<HTMLElement>('.bar-deck-name');
+  const left = toolbar.querySelector<HTMLElement>(':scope > .bar-group:first-child');
+  const center = toolbar.querySelector<HTMLElement>(':scope > .bar-center');
+  if (!label || label.hidden || !left || !center) return false;
+  const centerBox = center.getBoundingClientRect();
+  if (centerBox.width === 0) return false;
+  const overlap = left.getBoundingClientRect().right + COLLISION_GAP - centerBox.left;
+  const room = label.getBoundingClientRect().width - overlap;
+  if (room < MIN_DECK_PATH) return false;
+  label.style.maxWidth = `${Math.floor(room)}px`;
+  return centeredGroupsFit(toolbar);
+}
+
 /** Recompute the compactness immediately; exported for deterministic UI tests. */
 export function refreshResponsiveToolbar(toolbar: HTMLElement): void {
   toolbar.classList.remove(...LAYOUT_CLASSES);
+  const label = toolbar.querySelector<HTMLElement>('.bar-deck-name');
+  if (label) label.style.maxWidth = '';
 
+  if (centeredGroupsFit(toolbar)) return;
+  if (fitDeckPath(toolbar)) return;
+  if (label) label.style.maxWidth = '';
+  // The deck's folder gives up the path leading to it before its name.
+  toolbar.classList.add('toolbar-short-deck-path');
   if (centeredGroupsFit(toolbar)) return;
   toolbar.classList.add('toolbar-hide-deck-name');
   if (centeredGroupsFit(toolbar)) return;

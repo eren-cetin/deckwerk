@@ -25,13 +25,25 @@ function menuTarget(window: unknown): BrowserWindow | undefined {
     ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
 }
 
-export function installAppMenu(): void {
+/** What the menu asks the app to do itself, with no window to route through. */
+export interface AppMenuActions {
+  /** File › New Window: another editor window, on the welcome screen. */
+  newWindow: (from: BrowserWindow | undefined) => void;
+}
+
+export function installAppMenu(actions: AppMenuActions): void {
   const isMac = process.platform === 'darwin';
   const template: MenuItemConstructorOptions[] = [
     ...(isMac ? [{ role: 'appMenu' as const }] : []),
     {
       label: 'File',
       submenu: [
+        {
+          label: 'New Window',
+          accelerator: 'Shift+CmdOrCtrl+N',
+          click: (_item, window) => actions.newWindow(window as BrowserWindow | undefined),
+        },
+        { type: 'separator' },
         {
           label: 'New from Template…',
           click: (_item, window) => menuTarget(window)?.webContents.send(IPC.templateCommand, 'new'),

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { homedir } from 'node:os';
 import type { Deck } from '@shared/deck.js';
 import type { DeckHistoryDocument } from '@shared/deckHistory.js';
 import type { ClipboardReadResult, ClipboardWriteRequest } from '@shared/clipboard.js';
@@ -86,6 +87,12 @@ const api = {
   saveDeckHistory: (dir: string, history: DeckHistoryDocument): Promise<void> =>
     ipcRenderer.invoke(IPC.deckHistorySave, dir, history),
 
+  /** Open another, empty editor window (File › New Window). */
+  newWindow: (): Promise<void> => ipcRenderer.invoke(IPC.windowNew),
+  /** Show the open deck's folder in Finder (or the platform's file manager). */
+  revealDeckFolder: (): Promise<void> => ipcRenderer.invoke(IPC.deckRevealFolder),
+  /** The user's home folder, so paths can be shown as ~/…. */
+  homeDir: homedir(),
   /** Saved deck templates, newest first. */
   listTemplates: (): Promise<TemplateSummary[]> => ipcRenderer.invoke(IPC.templateList),
   /** Save this deck's design as a template; `replace` overwrites one of the same name. */
