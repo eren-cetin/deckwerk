@@ -139,7 +139,7 @@ type OpName =
   | 'click' | 'shift-click' | 'double-click text' | 'double-click image then text'
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
-  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu';
+  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -392,6 +392,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   add('grid toggle', 1);
   add('panel toggle', 1);
   add('path menu', 1);
+  if (pre.editing === null && pre.selection.length === 0) add('arrow slide', 2);
   if (pre.editing === null) add('section fold', 3);
   add('undo', 2);
   add('redo', 1);
@@ -665,6 +666,31 @@ async function performOp(
       const after = await session.allTexts();
       for (const [id, text] of Object.entries(after)) {
         if (texts[id] !== undefined && texts[id] !== text) flag('routing', `a section action changed ${id}'s text`);
+      }
+      return 'same';
+    }
+    case 'arrow slide': {
+      // Nothing selected: Right/Left page to the next or previous visible
+      // slide, or stay put at an end, unless a field has the keyboard.
+      const forward = next() < 0.5;
+      const expected = await session.cdp.evaluate<number | null>(`(() => {
+        const target = document.activeElement;
+        if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return null;
+        const { deck, slideIndex } = window.store.get();
+        let at = slideIndex + ${forward ? 1 : -1};
+        while (at >= 0 && at < deck.slides.length && deck.slides[at].skipped) at += ${forward ? 1 : -1};
+        return at < 0 || at >= deck.slides.length ? slideIndex : at;
+      })()`);
+      const texts = await session.allTexts();
+      await session.key(forward ? 'ArrowRight' : 'ArrowLeft', forward ? 39 : 37);
+      await wait(100);
+      if (expected !== null) {
+        const now = await session.cdp.evaluate<number>('window.store.get().slideIndex');
+        if (now !== expected) flag('routing', `${forward ? 'Right' : 'Left'} arrow went to slide ${now + 1}, expected ${expected + 1}`);
+      }
+      const after = await session.allTexts();
+      for (const [id, text] of Object.entries(after)) {
+        if (texts[id] !== undefined && texts[id] !== text) flag('routing', `an arrow key changed ${id}'s text`);
       }
       return 'same';
     }

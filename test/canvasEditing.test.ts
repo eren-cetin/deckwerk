@@ -4086,3 +4086,54 @@ describe('object groups', () => {
   });
 });
 
+
+describe('arrow keys with nothing selected', () => {
+  beforeEach(() => document.body.replaceChildren());
+
+  const press = (key: string, init: KeyboardEventInit = {}) => document.body.dispatchEvent(
+    new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }),
+  );
+
+  /** Four slides, the third hidden, on the first with nothing selected. */
+  function deckOfFour() {
+    const made = setup();
+    made.store.commit((deck) => {
+      for (const n of [2, 3, 4]) deck.slides.push({ ...structuredClone(deck.slides[0]), id: `slide-${n}`, elements: [] });
+      deck.slides[2].skipped = true;
+    });
+    made.store.selectSlide(0);
+    made.store.clearSelection();
+    bindEditorKeys(shellDeps(made.store), noopClipboard());
+    return made;
+  }
+
+  it('pages through the deck, stepping over hidden slides and stopping at the ends', () => {
+    const { store } = deckOfFour();
+    press('ArrowRight');
+    expect(store.get().slideIndex).toBe(1);
+    press('ArrowDown');
+    expect(store.get().slideIndex).toBe(3);
+    press('ArrowRight');
+    expect(store.get().slideIndex).toBe(3);
+    press('ArrowLeft');
+    expect(store.get().slideIndex).toBe(1);
+    press('ArrowUp');
+    expect(store.get().slideIndex).toBe(0);
+    press('ArrowUp');
+    expect(store.get().slideIndex).toBe(0);
+    press('PageDown');
+    expect(store.get().slideIndex).toBe(1);
+    press('PageUp');
+    expect(store.get().slideIndex).toBe(0);
+  });
+
+  it('still nudges a selected object instead, and leaves modified arrows alone', () => {
+    const { store } = deckOfFour();
+    press('ArrowRight', { shiftKey: true });
+    expect(store.get().slideIndex).toBe(0);
+    store.select(['text-1']);
+    press('ArrowRight');
+    expect(store.get().slideIndex).toBe(0);
+    expect(store.slide!.elements.find((element) => element.id === 'text-1')!.x).toBe(101);
+  });
+});

@@ -471,11 +471,24 @@ export function bindEditorKeys(deps: ShellDeps, clipboard: ClipboardActions): vo
         // Inside a group, Escape steps out to the group before it deselects.
         if (!store.stepOutOfGroup()) store.clearSelection();
         break;
+      case 'PageUp':
+      case 'PageDown':
+        e.preventDefault();
+        stepSlide(store, e.key === 'PageDown' ? 1 : -1);
+        break;
       case 'ArrowLeft':
       case 'ArrowRight':
       case 'ArrowUp':
       case 'ArrowDown': {
         e.preventDefault();
+        // With nothing selected on the slide, the arrows page through the
+        // deck: back with Left/Up, on with Right/Down.
+        if (store.get().selection.size === 0) {
+          if (!mod && !e.altKey && !e.shiftKey) {
+            stepSlide(store, e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1);
+          }
+          break;
+        }
         // Shift for a coarse nudge; plain arrows for pixel-accurate placement.
         const step = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
@@ -495,6 +508,18 @@ export function bindEditorKeys(deps: ShellDeps, clipboard: ClipboardActions): vo
         break;
     }
   });
+}
+
+/**
+ * Go to the next (`1`) or previous (`-1`) slide, stepping over hidden ones
+ * as the slide rail's own arrow keys do. Nothing happens at either end.
+ */
+export function stepSlide(store: ShellDeps['store'], step: 1 | -1): void {
+  const { deck, slideIndex } = store.get();
+  let next = slideIndex + step;
+  while (next >= 0 && next < deck.slides.length && deck.slides[next].skipped) next += step;
+  if (next < 0 || next >= deck.slides.length) return;
+  store.selectSlide(next);
 }
 
 type ContextItems = Array<{ label: string; action: () => void } | 'separator'>;
