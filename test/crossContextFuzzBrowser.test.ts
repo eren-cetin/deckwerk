@@ -139,7 +139,7 @@ type OpName =
   | 'click' | 'shift-click' | 'double-click text' | 'double-click image then text'
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
-  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case';
+  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case' | 'image caption';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -396,6 +396,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.editing === null) add('section fold', 3);
   if (pre.elements.includes(LIST)) add('list indent', 1);
   if (pre.elements.includes(PARA)) add('text case', 1);
+  if (pre.elements.includes(IMAGE)) add('image caption', 1);
   add('undo', 2);
   add('redo', 1);
   add('undo round-trip', 1);
@@ -748,6 +749,57 @@ async function performOp(
       for (const [id, text] of Object.entries(changed)) {
         if (texts[id] !== undefined && texts[id] !== text) {
           flag('routing', `changing the list indent changed ${id}: "${texts[id]}" -> "${text}"`);
+        }
+      }
+      return 'same';
+    }
+    case 'image caption': {
+      // Show caption on the picture, nudge the picture, and the caption is
+      // still the standard gap below it; switched off again, it is gone and
+      // the census is back where it was.
+      const geometry = (selector: string) => session.cdp.evaluate<{ x: number; y: number; w: number; h: number } | null>(`(() => {
+        const node = document.querySelector('${selector}');
+        return node ? { x: parseFloat(node.style.left), y: parseFloat(node.style.top),
+          w: parseFloat(node.style.width), h: parseFloat(node.style.height) } : null;
+      })()`);
+      const picture = `.slide-layer [data-element-id="${IMAGE}"]`;
+      const caption = '.slide-layer .element-text.role-caption';
+      const toggle = async () => {
+        const box = await session.cdp.evaluate<boolean>(`(() => {
+          const field = [...document.querySelectorAll('#inspector .field')]
+            .find((node) => node.querySelector('span')?.textContent === 'Show caption');
+          if (!field) return false;
+          field.querySelector('input').click();
+          return true;
+        })()`);
+        if (!box) flag('routing', 'the picture shows no Show caption switch');
+        await wait(120);
+        return box;
+      };
+      await session.click(IMAGE);
+      const texts = await session.allTexts();
+      if (!(await toggle())) return 'same';
+      const attached = async (when: string) => {
+        const [media, text] = [await geometry(picture), await geometry(caption)];
+        if (!media || !text) {
+          flag('routing', `${when}: the picture's caption is missing`);
+          return;
+        }
+        if (text.x !== media.x || text.w !== media.w || text.y !== media.y + media.h + 16) {
+          flag('routing', `${when}: caption at ${JSON.stringify(text)} under picture ${JSON.stringify(media)}`);
+        }
+      };
+      await attached('Show caption');
+      await session.click(IMAGE);
+      await session.key('ArrowRight', 39);
+      await wait(120);
+      await attached('after a nudge');
+      await toggle();
+      if (await geometry(caption)) flag('routing', 'switching Show caption off left the caption');
+      const after = await session.allTexts();
+      for (const [id, text] of Object.entries(after)) {
+        if (texts[id] !== undefined && texts[id] !== text) {
+          flag('routing', `captioning the picture changed ${id}: "${texts[id]}" -> "${text}"`);
         }
       }
       return 'same';

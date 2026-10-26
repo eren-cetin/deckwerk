@@ -178,12 +178,13 @@ describe('compact video inspector', () => {
       .toEqual([
         'Playback',
         'Trim',
+        'Caption',
         'Mask',
         'Border',
         'Effects',
       ]);
     expect(sections[0].textContent).toContain('Play preview');
-    expect(sections[2].textContent).toContain('Keep aspect ratio');
+    expect(sections[3].textContent).toContain('Keep aspect ratio');
     expect(inspectorHost.querySelectorAll('.z-order-row > button')).toHaveLength(4);
     expect(inspectorHost.textContent).not.toContain('Crop with the handles');
   });

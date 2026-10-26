@@ -13,6 +13,7 @@ import {
 } from '@shared/clipboard.js';
 import { effectiveThemeStyle } from '@shared/themes.js';
 import { makeId } from '@shared/geometry.js';
+import { captionsOf, createCaption, remapCaptions, syncCaptions } from '@shared/captions.js';
 import {
   groupMemberIds,
   groupSelection,
@@ -240,7 +241,7 @@ export class EditorStore {
   replaceWithHistory(deck: Deck, label: string): void {
     const anchor = this.cursorAnchor();
     const previous = this.state.deck;
-    this.state = { ...this.state, deck: parseDeck(deck), dirty: true };
+    this.state = { ...this.state, deck: syncCaptions(previous, parseDeck(deck)), dirty: true };
     this.pushUndo(previous, this.state.deck, label);
     this.restoreCursor(anchor);
     this.recordHistory(label);
@@ -374,6 +375,9 @@ export class EditorStore {
       coalesceKey?: string; historyGroup?: string; measurement?: boolean;
     },
   ): void {
+    // Captions follow their pictures through every edit, gesture or field,
+    // so this is the one place they are put back under them.
+    next = syncCaptions(previous, next);
     const forward = diffDecks(previous, next);
     if (forward.length === 0) return;
 
@@ -741,11 +745,13 @@ export class EditorStore {
     this.commit((deck) => {
       const slide = deck.slides[index];
       const copies: SlideElement[] = [];
+      const remap = new Map<string, string>();
       for (const el of slide.elements.filter((candidate) => ids.has(candidate.id))) {
         const copy = structuredClone(el);
         copy.lineageId = el.lineageId ?? el.id;
         copy.morphId = null;
         copy.id = makeId(el.type);
+        remap.set(el.id, copy.id);
         copy.x += offset.x;
         copy.y += offset.y;
         if (copy.type === 'shape' && copy.control) {
@@ -758,6 +764,7 @@ export class EditorStore {
       // A duplicated group is a new group; a piece duplicated inside a group
       // stays in it, beside its original.
       remapCopiedGroups(copies, slide.elements, () => makeId('group'), true);
+      remapCaptions(copies, remap);
       slide.elements.push(...copies);
     }, { label: ids.size === 1 ? 'Duplicate object' : 'Duplicate objects' });
     this.select(created);
@@ -798,9 +805,14 @@ export class EditorStore {
 
   /** Remove the selected elements and any timeline entries that target them. */
   deleteSelection(): void {
-    const ids = this.state.selection;
-    if (ids.size === 0) return;
+    const selected = this.state.selection;
+    if (selected.size === 0) return;
     const index = this.state.slideIndex;
+    // A picture takes its caption with it.
+    const ids = new Set([
+      ...selected,
+      ...captionsOf(this.state.deck.slides[index]?.elements ?? [], selected),
+    ]);
     this.commit((deck) => {
       const slide = deck.slides[index];
       slide.elements = slide.elements.filter((e) => !ids.has(e.id));
@@ -1202,7 +1214,8 @@ export async function pasteFromClipboard(
   if (!payload) return null;
 
   if (payload.kind === 'external-image') {
-    return insertClipboardImage(store, payload.asset);
+    // A layout's pictures are frames, not figures: no caption there.
+    return insertClipboardImage(store, payload.asset, !options.objectsOnly);
   }
 
   if (payload.kind === 'external-html') {
@@ -1347,7 +1360,7 @@ export async function pasteImageFilesFromClipboard(
     // survive the hand-off; the bytes are re-wrapped only to rename them.
     new File([image], name, { type: image.type }),
   ]);
-  return asset ? insertClipboardImage(store, asset) : null;
+  return asset ? insertClipboardImage(store, asset, true) : null;
 }
 
 /**
@@ -1373,6 +1386,7 @@ export function clipboardImageName(file: { name: string; type: string }): string
 function insertClipboardImage(
   store: EditorStore,
   asset: Extract<ClipboardReadResult, { kind: 'external-image' }>['asset'],
+  withCaption: boolean,
 ): { kind: 'elements'; count: number } {
   const id = makeId('image');
   store.commit((deck) => {
@@ -1387,7 +1401,7 @@ function insertClipboardImage(
     );
     const w = Math.round(naturalW * scale);
     const h = Math.round(naturalH * scale);
-    slide.elements.push({
+    const image: SlideElement = {
       id,
       type: 'image',
       x: Math.round((deck.canvas.w - w) / 2),
@@ -1403,7 +1417,9 @@ function insertClipboardImage(
       fit: 'contain',
       alt: 'Pasted screenshot',
       sourceBox: null,
-    });
+    };
+    const caption = withCaption ? createCaption(image, deck) : null;
+    slide.elements.push(image, ...(caption ? [caption] : []));
   }, { label: 'Paste screenshot' });
   store.select([id]);
   return { kind: 'elements', count: 1 };

@@ -1574,6 +1574,27 @@ describe('text formatting from the inspector controls', () => {
     expect(textOf(store, 'text-1').listIndent).toBe(30);
   });
 
+  it('adds and removes a picture’s caption from the Show caption switch', () => {
+    const picture = {
+      id: 'image-1', type: 'image', x: 200, y: 100, w: 800, h: 500, rot: 0, z: 1, opacity: 1,
+      class: [], style: {}, src: 'assets/figure.png', fit: 'contain', alt: '', sourceBox: null,
+    } as SlideElement;
+    const { store, inspectorHost } = setup([picture]);
+    const toggle = () => field(inspectorHost, 'Show caption').querySelector<HTMLInputElement>('input')!;
+    const caption = () => store.slide!.elements.find((element) =>
+      element.type === 'text' && element.captionFor === 'image-1');
+    expect(toggle().checked).toBe(false);
+
+    toggle().checked = true;
+    toggle().dispatchEvent(new Event('change', { bubbles: true }));
+    expect(caption()).toMatchObject({ x: 200, y: 616, w: 800 });
+    expect(toggle().checked).toBe(true);
+
+    toggle().checked = false;
+    toggle().dispatchEvent(new Event('change', { bubbles: true }));
+    expect(caption()).toBeUndefined();
+  });
+
   it('switches a box between capitals and the case it was typed in', () => {
     const { store, canvasHost, inspectorHost } = setup([
       textElement('text-1', {

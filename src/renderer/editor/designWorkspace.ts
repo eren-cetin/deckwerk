@@ -303,6 +303,7 @@ export class DesignWorkspace {
     this.previewStyle.textContent = overlayTheme ? themeCss(overlayTheme) : '';
 
     const masterCanvas = new EditorCanvas(canvasHost, masterStore);
+    masterCanvas.autoCaption = false;
     const masterInspector = new Inspector(inspectorInner, masterStore);
     masterInspector.editsLayoutMasters = true;
     wireCanvasInspector(masterCanvas, masterInspector);

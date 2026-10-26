@@ -216,6 +216,12 @@ const TextElement = BaseElement.extend({
    * unless theme.css says otherwise); set, it outranks theme.css.
    */
   listIndent: z.number().min(0).optional(),
+  /**
+   * The picture or video this box captions (src/shared/captions.ts). An
+   * attached caption is kept a fixed gap below its media at the media's
+   * width, and is deleted with it.
+   */
+  captionFor: Id.optional(),
   align: z.enum(['left', 'center', 'right', 'justify']).default('left'),
   valign: z.enum(['top', 'middle', 'bottom']).default('top'),
   /** Ordered, non-destructive visual effects. Order is significant. */

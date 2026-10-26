@@ -971,6 +971,7 @@ export function elementFromNode(
     ...(Number.isFinite(Number.parseFloat(node.dataset.listIndent ?? ''))
       ? { listIndent: Math.max(0, Number.parseFloat(node.dataset.listIndent!)) }
       : {}),
+    ...(node.dataset.captionFor?.trim() ? { captionFor: node.dataset.captionFor.trim() } : {}),
   };
 }
 
@@ -1060,6 +1061,8 @@ function elementToHtml(element: SlideElement, build?: TimelineEntry): string {
     build ? `data-build="${build.trigger.on}${build.trigger.delay ? `+${build.trigger.delay}` : ''}"` : '',
     element.type === 'text' && element.layoutPlaceholder
       ? `data-layout-slot="${element.layoutPlaceholder}"` : '',
+    element.type === 'text' && element.captionFor
+      ? `data-caption-for="${escape(element.captionFor)}"` : '',
   ].filter(Boolean).join(' ');
 
   switch (element.type) {

@@ -96,6 +96,7 @@ const ELEMENT_PROPERTIES: Record<SlideElement['type'], PropertyDoc[]> = {
     { path: 'noWrap', type: 'boolean', description: 'Break only where authored and fit long lines.', example: true, unset: 'Unset to restore normal wrapping.' },
     { path: 'noWrapMode', type: 'enum', values: ['shrink', 'condense'], description: 'How a no-wrap line is fitted.', example: 'shrink' },
     { path: 'paragraphSpacing', type: 'number >= 0', description: 'Gap in pixels between paragraphs and list items.', example: 12, unset: 'Unset to use theme spacing.' },
+    { path: 'captionFor', type: 'string', description: 'Id of the picture or video this box captions; the editor keeps it a fixed gap below that media, as wide, and deletes it with it.', example: 'image-1', unset: 'Unset to detach the caption.' },
     { path: 'listIndent', type: 'number >= 0', description: 'Space in pixels before the bullets or numbers of top-level lists.', example: 16, unset: 'Unset to use the stylesheet indent.' },
   ],
   image: [

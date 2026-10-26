@@ -1,4 +1,5 @@
 import type { Deck, MediaEffect, Slide, SlideElement } from '@shared/deck.js';
+import { captionOf, createCaption, isCaptionable } from '@shared/captions.js';
 import {
   applyListStyleToHtml,
   hasList,
@@ -687,6 +688,32 @@ export class Inspector {
     );
     masking.content.appendChild(this.maskButton(elementId));
     return masking.section;
+  }
+
+  /**
+   * Caption: a caption-role text box kept a fixed gap below the picture and
+   * as wide as it (src/shared/captions.ts). New pictures arrive with one;
+   * this switch takes it away or brings it back.
+   */
+  private captionSection(el: Extract<SlideElement, { type: 'image' | 'video' }>): HTMLElement {
+    const section = optionSection('Caption', 'media-caption-options');
+    const attached = captionOf(this.store.slide?.elements ?? [], el.id);
+    section.content.appendChild(checkboxField('Show caption', attached !== null, (on) => {
+      const index = this.store.get().slideIndex;
+      this.store.commit((deck) => {
+        const slide = deck.slides[index];
+        const media = slide?.elements.find((candidate) => candidate.id === el.id);
+        if (!slide || !media || !isCaptionable(media)) return;
+        const existing = captionOf(slide.elements, media.id);
+        if (on && !existing) slide.elements.push(createCaption(media, deck));
+        if (!on && existing) {
+          slide.elements = slide.elements.filter((candidate) => candidate.id !== existing.id);
+          slide.timeline = slide.timeline.filter((entry) =>
+            entry.action.target !== existing.id && entry.trigger.ref !== existing.id);
+        }
+      }, { label: on ? 'Add caption' : 'Remove caption' });
+    }));
+    return section.section;
   }
 
   /**
@@ -1410,6 +1437,7 @@ export class Inspector {
         // Trim is about time, like playback, so it sits beside it rather than
         // after the mask and border sections.
         wrap.appendChild(this.trimSection(el));
+        wrap.appendChild(this.captionSection(el));
         wrap.appendChild(this.mediaMaskControls(el.id));
         wrap.appendChild(this.mediaBorderControls());
         wrap.appendChild(this.mediaEffectsControls());
@@ -1430,6 +1458,7 @@ export class Inspector {
 
       case 'image': {
         const wrap = typeSections();
+        wrap.appendChild(this.captionSection(el));
         wrap.appendChild(this.mediaMaskControls(el.id));
         wrap.appendChild(this.mediaBorderControls());
         wrap.appendChild(this.mediaEffectsControls());

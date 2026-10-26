@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { parseDeck, type Deck, type ThemeStyle } from '../src/shared/deck.js';
+import { CAPTION_GAP } from '../src/shared/captions.js';
 import {
   CLIPBOARD_FORMAT,
   type ClipboardReadResult,
@@ -403,6 +404,55 @@ describe('cross-instance copy/paste', () => {
     expect(selected.h).toBeLessThanOrEqual(store.get().deck.canvas.h * 0.8);
     expect(selected.x).toBe(Math.round((store.get().deck.canvas.w - selected.w) / 2));
     expect(selected.y).toBe(Math.round((store.get().deck.canvas.h - selected.h) / 2));
+  });
+
+  it('pastes a screenshot with a caption that follows it and goes with it', async () => {
+    pasteboard = {
+      kind: 'external-image',
+      asset: { src: 'assets/Figure.abc12345.png', kind: 'image', width: 1600, height: 900, duration: null },
+    };
+    const store = new EditorStore(sampleDeck(), '/dest-deck');
+    await pasteFromClipboard(store);
+    const elements = () => store.slide!.elements;
+    const pastedId = store.selectedElements()[0].id;
+    const picture = () => elements().find((element) => element.id === pastedId)!;
+    const caption = () => elements().find((element) => element.type === 'text' && element.captionFor === picture().id);
+    expect(caption()).toMatchObject({ x: picture().x, y: picture().y + picture().h + CAPTION_GAP, w: picture().w });
+    expect(caption()!.class).toEqual(['role-caption', 'placeholder']);
+    // The paste is one step: undo takes the picture and its caption together.
+    expect(store.selectedElements().map((element) => element.type)).toEqual(['image']);
+
+    // Moving and resizing the picture brings the caption along, in the same step.
+    store.updateSelected((element) => {
+      element.x -= 100;
+      element.w += 200;
+    }, { label: 'Move' });
+    expect(caption()).toMatchObject({ x: picture().x, y: picture().y + picture().h + CAPTION_GAP, w: picture().w });
+    store.undo();
+    expect(caption()).toMatchObject({ x: picture().x, w: picture().w });
+
+    // Duplicating both gives the copy its own caption, under the copy.
+    store.select([picture().id, caption()!.id]);
+    const copies = store.duplicateSelection();
+    const copiedPicture = elements().find((element) => element.id === copies[0])!;
+    const copiedCaption = elements().find((element) => element.id === copies[1])!;
+    expect(copiedCaption).toMatchObject({ captionFor: copiedPicture.id, y: copiedPicture.y + copiedPicture.h + CAPTION_GAP });
+
+    // Deleting a picture deletes its caption.
+    store.select([copiedPicture.id]);
+    store.deleteSelection();
+    expect(elements().some((element) => element.id === copiedCaption.id)).toBe(false);
+    expect(caption()).toBeDefined();
+  });
+
+  it('pastes a picture onto a layout with no caption', async () => {
+    pasteboard = {
+      kind: 'external-image',
+      asset: { src: 'assets/Logo.abc12345.png', kind: 'image', width: 400, height: 200, duration: null },
+    };
+    const store = new EditorStore(sampleDeck(), '/dest-deck');
+    await pasteFromClipboard(store, undefined, { objectsOnly: true });
+    expect(store.slide!.elements.some((element) => element.type === 'text' && element.captionFor)).toBe(false);
   });
 
   it('uploads and pastes a PNG from the browser collaboration clipboard', async () => {

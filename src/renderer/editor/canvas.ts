@@ -1,6 +1,7 @@
 import { openContextMenu } from './contextMenuPlacement.js';
 import type { Deck, Slide, SlideElement } from '@shared/deck.js';
 import { type Rect, fitScale, makeId } from '@shared/geometry.js';
+import { createCaption } from '@shared/captions.js';
 
 type XY = { x: number; y: number };
 import {
@@ -896,6 +897,11 @@ export class EditorCanvas {
     start: Element | null;
     end: Element | null;
   } | null = null;
+  /**
+   * Whether pictures dropped here arrive with a caption. A layout's pictures
+   * are frames rather than figures, so the layout editor turns it off.
+   */
+  autoCaption = true;
   /** The next paste into the text being edited is ⇧⌘V's plain text. */
   private plainPastePending = false;
   /** Last non-collapsed browser selection inside the active text element. */
@@ -6845,7 +6851,7 @@ export class EditorCanvas {
             style: {},
           };
           const src = makePendingSrc(drop.id, drop.file.name);
-          slide.elements.push(
+          const media: Extract<SlideElement, { type: 'image' | 'video' }> = (
             drop.kind === 'video'
               ? {
                   ...base,
@@ -6868,8 +6874,10 @@ export class EditorCanvas {
                   fit: 'contain',
                   alt: drop.file.name,
                   sourceBox: null,
-                },
+                }
           );
+          slide.elements.push(media);
+          if (this.autoCaption) slide.elements.push(createCaption(media, deck));
         });
       });
       this.store.select(created);
@@ -6921,7 +6929,7 @@ export class EditorCanvas {
     this.store.commit((d) => {
       const slide = d.slides[this.store.get().slideIndex];
       if (!slide) return;
-      slide.elements.push({
+      const image: Extract<SlideElement, { type: 'image' }> = {
         id,
         type: 'image',
         x: Math.round(dropPoint.x - w / 2),
@@ -6937,7 +6945,9 @@ export class EditorCanvas {
         fit: 'contain',
         alt: webImageName(source),
         sourceBox: null,
-      });
+      };
+      slide.elements.push(image);
+      if (this.autoCaption) slide.elements.push(createCaption(image, deck));
     }, { label: 'Drop image' });
     this.store.select([id]);
     // The remote image itself stands in while the host fetches it.

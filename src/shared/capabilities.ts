@@ -59,6 +59,7 @@ export function capabilities(): Capability[] {
         'contentStyle applies CSS to the inner text content rather than the positioned box; use it for glyph paint such as gradient text, text strokes and shadows.',
         'html may contain inline markup: <b>, <i>, <br>, <span>.',
         'paragraphSpacing (px) sets the gap between paragraphs and between bullets; unset keeps the theme default.',
+        'A figure caption is a role-caption text box with captionFor (data-caption-for in HTML) naming its picture or video; the editor keeps it 16px below the media at its width.',
         "align sets the horizontal setting of the type — 'left', 'center', 'right' or 'justify'.",
         "valign places the text inside its box — 'top', 'middle' or 'bottom' — which is what keeps a caption sitting against a figure rather than floating.",
       ],
