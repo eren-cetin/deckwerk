@@ -681,6 +681,17 @@ function clearCellRunOverrides(
   if (changed) normalizeInlineStyleSpans(cell);
 }
 
+/**
+ * The space before a box's first top-level list's markers, as drawn: what
+ * the List indent steps start from when the box has not set its own.
+ */
+function listIndentOf(content: HTMLElement): number | null {
+  const list = content.querySelector<HTMLElement>(':scope > :is(ul, ol)');
+  if (!list) return null;
+  const indent = Number.parseFloat(getComputedStyle(list).paddingLeft);
+  return Number.isFinite(indent) ? indent : 0;
+}
+
 /** What a rectangular cell range spans, read from its two corners. */
 function tableRangeMode(range: Pick<TableSelection, 'row' | 'column' | 'rowEnd' | 'columnEnd'>): TableSelection['mode'] {
   if (range.rowEnd === range.row) return range.columnEnd === range.column ? 'cell' : 'row';
@@ -6440,6 +6451,7 @@ export class EditorCanvas {
     fontWeightExplicit: boolean;
     fittedFontSize: number | null;
     paragraphSpacing: number | null;
+    listIndent: number | null;
   } {
     const element = this.slideLayer.querySelector<HTMLElement>(
       `[data-element-id="${CSS.escape(elementId)}"]`,
@@ -6469,6 +6481,7 @@ export class EditorCanvas {
         fontWeightExplicit: false,
         fittedFontSize: null,
         paragraphSpacing: null,
+        listIndent: null,
       };
     }
     const style = getComputedStyle(target);
@@ -6517,6 +6530,7 @@ export class EditorCanvas {
       fontWeightExplicit: explicit('fontWeight'),
       fittedFontSize: Number.isFinite(fittedFontSize) ? fittedFontSize : null,
       paragraphSpacing: Number.isFinite(paragraphSpacing) ? paragraphSpacing : 0,
+      listIndent: listIndentOf(node),
     };
   }
 

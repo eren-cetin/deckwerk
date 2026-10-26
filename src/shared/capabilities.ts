@@ -99,6 +99,7 @@ export function capabilities(): Capability[] {
         'One <li> per point; inline markup (<b>, <i>) works inside items.',
         'The whole list is one text element; the editor’s "Bulleted list" checkbox toggles the same markup.',
         'paragraphSpacing (px) spaces the items; unset keeps the theme default.',
+        'listIndent (px), data-list-indent in HTML, is the space before the markers; unset keeps the stylesheet indent, flush with the box edge by default.',
       ],
       elements: [
         text('cap-lists-title', 'Lists are markup, not characters', { x: 160, y: 90, w: 1600, h: 150 }, { class: ['role-title'] }),

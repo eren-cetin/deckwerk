@@ -213,6 +213,7 @@ function copyPlaceholderPresentation(
   target.noWrap = source.noWrap;
   target.noWrapMode = source.noWrapMode;
   target.paragraphSpacing = source.paragraphSpacing;
+  target.listIndent = source.listIndent;
   // `placeholder` means "prompt copy the author has not replaced", and the
   // player, exports and rail thumbnails all hide such text (type.css). The
   // first real content commit retires it (see canvas.ts), so a master update

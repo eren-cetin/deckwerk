@@ -1547,6 +1547,38 @@ describe('text formatting from the inspector controls', () => {
     expect(nodeOf(canvasHost, 'text-1').dataset.paragraphSpacing).toBeUndefined();
   });
 
+  it('steps the space before a list’s bullets with − and +, on the grid', () => {
+    const { store, canvasHost, inspectorHost } = setup([
+      textElement('text-1', { html: '<ul><li>First</li><li>Second</li></ul>' }),
+    ]);
+    const indent = () => inspectorHost.querySelector<HTMLElement>('.field-list-indent')!;
+    const less = () => indent().querySelector<HTMLButtonElement>('.list-indent-less')!;
+    const more = () => indent().querySelector<HTMLButtonElement>('.list-indent-more')!;
+    // Flush with the box edge, as the player draws a list by default.
+    expect(indent().querySelector('.list-indent-value')?.textContent).toBe('0');
+    expect(less().disabled).toBe(true);
+
+    more().click();
+    expect(textOf(store, 'text-1').listIndent).toBe(5);
+    expect(nodeOf(canvasHost, 'text-1').dataset.listIndent).toBe('5');
+    expect(nodeOf(canvasHost, 'text-1').style.getPropertyValue('--list-indent')).toBe('5px');
+
+    // An indent off the grid (a theme's 1.25em) steps onto it.
+    store.updateSelected((element) => {
+      if (element.type === 'text') element.listIndent = 37.5;
+    });
+    more().click();
+    expect(textOf(store, 'text-1').listIndent).toBe(40);
+    less().click();
+    less().click();
+    expect(textOf(store, 'text-1').listIndent).toBe(30);
+  });
+
+  it('has no list indent for a box without a list', () => {
+    const { inspectorHost } = setup([textElement('text-1', { html: '<p>Prose</p>' })]);
+    expect(inspectorHost.querySelector('.field-list-indent')).toBeNull();
+  });
+
   it('assigns the semantic type role that theme.css and Cast fonts target', () => {
     const { store, canvasHost, inspectorHost } = setup([textElement('text-1')]);
     const role = () => field(inspectorHost, 'Role').querySelector('select')!;

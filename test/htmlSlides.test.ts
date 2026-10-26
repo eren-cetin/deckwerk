@@ -621,6 +621,25 @@ describe('deck objects become authored HTML', () => {
     expect(parsed).toMatchObject({ type: 'text', paragraphSpacing: 24 });
   });
 
+  it('round-trips a list indent through the data attribute', () => {
+    const deck = emptyDeck('Indent');
+    deck.slides[0].elements = [{
+      id: 'list', type: 'text', x: 10, y: 20, w: 300, h: 100, rot: 0, z: 1,
+      opacity: 1, class: [], style: {}, html: '<ul><li>a</li><li>b</li></ul>',
+      align: 'left', valign: 'top', listIndent: 15,
+    }];
+    const html = slideToHtml(parseDeck(deck).slides[0], { w: 1920, h: 1080 });
+    expect(html).toContain('data-list-indent="15"');
+    expect(html).toContain('--list-indent:15px');
+
+    const parsed = elementFromNode(node({
+      tag: 'ul',
+      html: '<li>a</li><li>b</li>',
+      dataset: { listIndent: '15' },
+    }), 'list', 1);
+    expect(parsed).toMatchObject({ type: 'text', listIndent: 15 });
+  });
+
   it('carries the slide identity a bake-back needs to find its target', () => {
     const slide = emptyDeck('Deck').slides[0];
     slide.morphDuration = 1450;

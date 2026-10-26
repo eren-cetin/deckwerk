@@ -378,6 +378,14 @@ export function applyTextRenderState(
     node.style.removeProperty('--paragraph-spacing');
   }
 
+  if (el.listIndent !== undefined) {
+    node.dataset.listIndent = String(el.listIndent);
+    node.style.setProperty('--list-indent', `${el.listIndent}px`);
+  } else {
+    delete node.dataset.listIndent;
+    node.style.removeProperty('--list-indent');
+  }
+
   if (el.noWrap) node.dataset.noWrap = 'true';
   else delete node.dataset.noWrap;
   if (el.noWrap && el.noWrapMode === 'condense') node.dataset.fitMode = 'condense';

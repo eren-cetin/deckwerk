@@ -193,6 +193,15 @@
   text-indent: -1.4em;
 }
 
+/* A box's own list indent (Props › List, − and +): the space before its
+   top-level markers. It is the author's explicit choice for this box, so it
+   outranks a deck-wide list rule in theme.css, `!important` included; the
+   element class keeps it more specific than such a rule. Sub-lists keep their
+   own step below. */
+.element[data-list-indent] .text-content > :is(ul, ol) {
+  padding-left: var(--list-indent, 0px) !important;
+}
+
 /* Blocks nested in an item (a wrapped paragraph, a sub-list) are not the
    marker line and must not inherit its hanging indent. */
 .text-body li > :is(p, div, ul, ol, table) {

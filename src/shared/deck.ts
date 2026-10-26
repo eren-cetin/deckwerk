@@ -210,6 +210,12 @@ const TextElement = BaseElement.extend({
    * Unset keeps the theme's default spacing.
    */
   paragraphSpacing: z.number().min(0).optional(),
+  /**
+   * Space in px before the box's bullets and numbers: the inset of its
+   * top-level lists. Unset keeps the stylesheet's (flush with the box edge
+   * unless theme.css says otherwise); set, it outranks theme.css.
+   */
+  listIndent: z.number().min(0).optional(),
   align: z.enum(['left', 'center', 'right', 'justify']).default('left'),
   valign: z.enum(['top', 'middle', 'bottom']).default('top'),
   /** Ordered, non-destructive visual effects. Order is significant. */

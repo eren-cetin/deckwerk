@@ -170,6 +170,7 @@ export class Inspector {
     fontWeightExplicit: boolean;
     fittedFontSize: number | null;
     paragraphSpacing: number | null;
+    listIndent: number | null;
   };
   onInsertTableColumn?: (after: boolean) => void;
   onDeleteTableColumn?: () => void;
@@ -1179,6 +1180,19 @@ export class Inspector {
       }),
     ));
 
+    const listed = texts.map((text, index) => ({ text, index }))
+      .filter(({ text }) => listMarkerColorState(text.html).hasList);
+    if (listed.length > 0) {
+      const indents = listed.map(({ text, index }) =>
+        text.listIndent ?? computedTypography[index]?.listIndent ?? 0);
+      wrap.appendChild(listIndentField(indents, (indent) =>
+        this.store.updateSelected((element) => {
+          if (element.type === 'text' && listMarkerColorState(element.html).hasList) {
+            element.listIndent = indent;
+          }
+        }, { label: 'Change list indent' })));
+    }
+
     const markerStates = texts.map((text) => listMarkerColorState(text.html))
       .filter((state) => state.hasList);
     if (markerStates.length > 0) {
@@ -1741,6 +1755,12 @@ export class Inspector {
         // when a list is switched on.
         const authoredMarker = listMarkerColorState(el.html);
         if (authoredMarker.hasList) {
+          listRow.appendChild(listIndentField(
+            [el.listIndent ?? computedTypography?.listIndent ?? 0],
+            (indent) => this.store.updateSelected((target) => {
+              if (target.type === 'text') target.listIndent = indent;
+            }, { label: 'Change list indent' }),
+          ));
           const marker = this.textSelectionMarkerColor?.() ?? authoredMarker;
           listRow.appendChild(colorField(
             marker.mixed ? 'Marker colour (mixed)' : 'Marker colour',
@@ -2950,6 +2970,59 @@ const SHAPE_KIND_GLYPHS = {
  * and is visually hidden; the buttons are its face. Each button sets the
  * select and dispatches `change`, so there is one code path for both.
  */
+/** How far one press of the List indent buttons moves, in px. */
+const LIST_INDENT_STEP = 5;
+
+/**
+ * The List row's − and + buttons: less or more space before the bullets.
+ * A press moves to the next multiple of the step, so an indent the theme set
+ * off the grid (1.25em is 37.5px at 30px) lands on it at once.
+ *
+ * Args:
+ *   indents: Each selected box's indent as drawn, its own or the
+ *     stylesheet's. Boxes that differ show as mixed and step from the
+ *     smallest, so one press lines them all up.
+ *   onChange: Called with the new indent in px.
+ */
+function listIndentField(indents: number[], onChange: (indent: number) => void): HTMLElement {
+  const mixed = !indents.every((indent) => indent === indents[0]);
+  const wrap = document.createElement('div');
+  wrap.className = 'field field-segmented field-list-indent';
+  const label = document.createElement('span');
+  label.textContent = 'Indent';
+  const value = document.createElement('span');
+  value.className = 'list-indent-value';
+  value.textContent = mixed ? '–' : String(Math.round(indents[0] ?? 0));
+  value.title = mixed ? 'The selected lists differ' : 'Space before bullets, in px';
+  const strip = document.createElement('div');
+  strip.className = 'segmented-buttons';
+  const from = Math.min(...indents, 400);
+  for (const [direction, glyph, title] of [
+    [-1, '−', 'Less space before bullets'],
+    [1, '+', 'More space before bullets'],
+  ] as const) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `segment-button list-indent-${direction < 0 ? 'less' : 'more'}`;
+    button.textContent = glyph;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    const next = direction < 0
+      ? Math.max(0, Math.ceil(from / LIST_INDENT_STEP - 1) * LIST_INDENT_STEP)
+      : Math.min(400, Math.floor(from / LIST_INDENT_STEP + 1) * LIST_INDENT_STEP);
+    if (direction < 0 && from <= 0) button.disabled = true;
+    // Keep the pointer-down on the canvas: a focus change would end a live
+    // text edit before the click lands.
+    button.addEventListener('pointerdown', (event) => event.preventDefault());
+    button.addEventListener('click', () => onChange(next));
+    strip.appendChild(button);
+    // The number sits between the two buttons that change it.
+    if (direction < 0) strip.appendChild(value);
+  }
+  wrap.append(label, strip);
+  return wrap;
+}
+
 function segmentedSelectField(
   label: string,
   choices: Array<{ value: string; title: string; icon?: string; text?: string }>,

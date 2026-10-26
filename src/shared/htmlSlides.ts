@@ -968,6 +968,9 @@ export function elementFromNode(
     ...(Number.isFinite(Number.parseFloat(node.dataset.paragraphSpacing ?? ''))
       ? { paragraphSpacing: Math.max(0, Number.parseFloat(node.dataset.paragraphSpacing!)) }
       : {}),
+    ...(Number.isFinite(Number.parseFloat(node.dataset.listIndent ?? ''))
+      ? { listIndent: Math.max(0, Number.parseFloat(node.dataset.listIndent!)) }
+      : {}),
   };
 }
 
@@ -1101,9 +1104,11 @@ function elementToHtml(element: SlideElement, build?: TimelineEntry): string {
         + `${element.noWrapMode === 'condense' ? ' data-fit-mode="condense"' : ''}`
         + `${element.paragraphSpacing !== undefined
           ? ` data-paragraph-spacing="${element.paragraphSpacing}"` : ''}`
+        + `${element.listIndent !== undefined ? ` data-list-indent="${element.listIndent}"` : ''}`
         + ` ${styleAttr(position, inline, `text-align:${element.align};`,
-          element.paragraphSpacing !== undefined
-            ? `--paragraph-spacing:${element.paragraphSpacing}px;` : '')}>${body}</div>`;
+          (element.paragraphSpacing !== undefined
+            ? `--paragraph-spacing:${element.paragraphSpacing}px;` : '')
+          + (element.listIndent !== undefined ? `--list-indent:${element.listIndent}px;` : ''))}>${body}</div>`;
     }
     case 'image':
       if (element.sourceBox) {

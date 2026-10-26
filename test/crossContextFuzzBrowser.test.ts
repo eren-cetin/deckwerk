@@ -139,7 +139,7 @@ type OpName =
   | 'click' | 'shift-click' | 'double-click text' | 'double-click image then text'
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
-  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide';
+  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -394,6 +394,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   add('path menu', 1);
   if (pre.editing === null && pre.selection.length === 0) add('arrow slide', 2);
   if (pre.editing === null) add('section fold', 3);
+  if (pre.elements.includes(LIST)) add('list indent', 1);
   add('undo', 2);
   add('redo', 1);
   add('undo round-trip', 1);
@@ -718,6 +719,35 @@ async function performOp(
       const after = await session.allTexts();
       for (const [id, text] of Object.entries(after)) {
         if (texts[id] !== undefined && texts[id] !== text) flag('routing', `the deck folder menu changed ${id}'s text`);
+      }
+      return 'same';
+    }
+    case 'list indent': {
+      // The − or + beside List, with the list box selected (or being typed
+      // into): its bullets move one step and not one word of any box changes.
+      await session.click(LIST);
+      const control = '#inspector .field-list-indent';
+      const present = await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('${control}'))`);
+      if (!present) {
+        flag('routing', 'the list box shows no List indent control');
+        return 'same';
+      }
+      const indent = () => session.cdp.evaluate<number>(`parseFloat(getComputedStyle(
+        document.querySelector('.slide-layer [data-element-id="${LIST}"] .text-content > ul')).paddingLeft)`);
+      const before = await indent();
+      const more = next() < 0.5 || before <= 0;
+      const texts = await session.allTexts();
+      await session.cdp.click(`${control} .list-indent-${more ? 'more' : 'less'}`);
+      await wait(120);
+      const after = await indent();
+      if (more ? after <= before : after >= before) {
+        flag('routing', `List indent ${more ? '+' : '−'} moved the bullets from ${before}px to ${after}px`);
+      }
+      const changed = await session.allTexts();
+      for (const [id, text] of Object.entries(changed)) {
+        if (texts[id] !== undefined && texts[id] !== text) {
+          flag('routing', `changing the list indent changed ${id}: "${texts[id]}" -> "${text}"`);
+        }
       }
       return 'same';
     }

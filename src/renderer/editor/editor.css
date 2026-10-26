@@ -4621,6 +4621,23 @@ select.panel-action-select {
   margin-bottom: 6px;
 }
 .text-list-row:has(> .field-color-stacked) { grid-template-columns: minmax(0, 1fr) 98px; }
+/* List indent's − and + sit between the style strip and the marker swatch. */
+.text-list-row:has(> .field-list-indent) { grid-template-columns: minmax(0, 1fr) 78px; }
+.text-list-row:has(> .field-list-indent):has(> .field-color-stacked) {
+  grid-template-columns: minmax(0, 1fr) 78px 98px;
+}
+.field-list-indent .segmented-buttons { grid-auto-columns: 22px minmax(0, 1fr) 22px; }
+.field-list-indent .segment-button { font-family: inherit; font-size: 14px; }
+.list-indent-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font: 10.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
 .text-list-row > .field { margin-bottom: 0; min-width: 0; }
 .font-fallback-note[hidden] { display: none; }
 .font-fallback-note {
