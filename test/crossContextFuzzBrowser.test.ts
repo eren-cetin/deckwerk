@@ -139,7 +139,7 @@ type OpName =
   | 'click' | 'shift-click' | 'double-click text' | 'double-click image then text'
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
-  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent';
+  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -395,6 +395,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.editing === null && pre.selection.length === 0) add('arrow slide', 2);
   if (pre.editing === null) add('section fold', 3);
   if (pre.elements.includes(LIST)) add('list indent', 1);
+  if (pre.elements.includes(PARA)) add('text case', 1);
   add('undo', 2);
   add('redo', 1);
   add('undo round-trip', 1);
@@ -747,6 +748,32 @@ async function performOp(
       for (const [id, text] of Object.entries(changed)) {
         if (texts[id] !== undefined && texts[id] !== text) {
           flag('routing', `changing the list indent changed ${id}: "${texts[id]}" -> "${text}"`);
+        }
+      }
+      return 'same';
+    }
+    case 'text case': {
+      // A Case choice for the paragraph box: its letters are drawn in the new
+      // case while the words stored in every box stay exactly as typed.
+      await session.click(PARA);
+      const choices = ['As typed', 'All capitals', 'All lowercase', 'Capitalize each word'];
+      const values = ['none', 'uppercase', 'lowercase', 'capitalize'];
+      const pickIndex = Math.floor(next() * choices.length);
+      const button = `#inspector .text-case .segment-button[title="${choices[pickIndex]}"]`;
+      if (!(await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('${button}'))`))) {
+        flag('routing', 'the paragraph box shows no Case control');
+        return 'same';
+      }
+      const texts = await session.allTexts();
+      await session.cdp.click(button);
+      await wait(120);
+      const drawn = await session.cdp.evaluate<string>(`getComputedStyle(
+        document.querySelector('.slide-layer [data-element-id="${PARA}"] .text-content')).textTransform`);
+      if (drawn !== values[pickIndex]) flag('routing', `Case "${choices[pickIndex]}" drew the paragraph as ${drawn}`);
+      const after = await session.allTexts();
+      for (const [id, text] of Object.entries(after)) {
+        if (texts[id] !== undefined && texts[id] !== text) {
+          flag('routing', `changing the case changed the words of ${id}: "${texts[id]}" -> "${text}"`);
         }
       }
       return 'same';

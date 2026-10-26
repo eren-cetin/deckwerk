@@ -183,6 +183,34 @@ export function setWholeTextAlignment(
   element.html = setHtmlTextProperty(element.html, 'text-align', value);
 }
 
+/** How a box's letters are drawn: as typed, or recased by CSS. */
+export type TextCase = 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+
+/**
+ * Set the case a whole box is drawn in. The stored words never change; only
+ * `text-transform` does. "As typed" is written as an explicit `none`, since a
+ * theme class (a deck's kicker style, say) can capitalise a box that carries
+ * no case of its own. Runs inside the box lose their own case so the box's
+ * choice is the one that shows.
+ */
+export function setWholeTextCase(element: TextElement, value: TextCase): void {
+  element.style = { ...element.style, 'text-transform': value };
+  if (element.contentStyle?.['text-transform'] !== undefined) {
+    const { 'text-transform': _dropped, ...rest } = element.contentStyle;
+    element.contentStyle = Object.keys(rest).length > 0 ? rest : undefined;
+  }
+  const template = document.createElement('template');
+  template.innerHTML = element.html;
+  let changed = false;
+  for (const node of template.content.querySelectorAll<HTMLElement>('[style]')) {
+    if (!node.style.getPropertyValue('text-transform')) continue;
+    node.style.removeProperty('text-transform');
+    removeEmptyStyleAttribute(node);
+    changed = true;
+  }
+  if (changed) element.html = serialized(template.content);
+}
+
 export function setWholeTextParagraphSpacing(element: TextElement, value: number | null): void {
   if (value === null) delete element.paragraphSpacing;
   else element.paragraphSpacing = Math.max(0, value);

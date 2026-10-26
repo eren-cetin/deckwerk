@@ -217,7 +217,7 @@ describe('text formatting from the inspector controls', () => {
       .map((node) => node.textContent?.trim());
 
     expect(labels('.text-typography-options .field > span')).toEqual([
-      'Role', 'Font family', 'Font size', 'Font weight', 'Style', 'Colour',
+      'Role', 'Font family', 'Font size', 'Font weight', 'Style', 'Colour', 'Case',
     ]);
     expect(labels('.text-layout-options .field > span')).toEqual([
       'Auto-fit text to box', 'Disable automatic line breaks', 'List',
@@ -1572,6 +1572,45 @@ describe('text formatting from the inspector controls', () => {
     less().click();
     less().click();
     expect(textOf(store, 'text-1').listIndent).toBe(30);
+  });
+
+  it('switches a box between capitals and the case it was typed in', () => {
+    const { store, canvasHost, inspectorHost } = setup([
+      textElement('text-1', {
+        style: { 'text-transform': 'uppercase' },
+        html: '<p>Explicit <span style="text-transform: uppercase; color: rgb(255, 0, 0);">3D</span> representation</p>',
+      }),
+    ]);
+    const active = () => field(inspectorHost, 'Case')
+      .querySelector<HTMLButtonElement>('.segment-button.is-active')?.title ?? null;
+    const choose = (title: string) => field(inspectorHost, 'Case')
+      .querySelector<HTMLButtonElement>(`.segment-button[title="${title}"]`)!.click();
+    expect(active()).toBe('All capitals');
+
+    choose('As typed');
+    const element = textOf(store, 'text-1');
+    expect(element.style['text-transform']).toBe('none');
+    // A run's own case would overrule the box's, so it goes; its colour stays.
+    expect(element.html).toBe('<p>Explicit <span style="color: rgb(255, 0, 0);">3D</span> representation</p>');
+    expect(nodeOf(canvasHost, 'text-1').style.textTransform).toBe('none');
+    expect(active()).toBe('As typed');
+
+    choose('Capitalize each word');
+    expect(textOf(store, 'text-1').style['text-transform']).toBe('capitalize');
+    store.undo();
+    expect(textOf(store, 'text-1').style['text-transform']).toBe('none');
+  });
+
+  it('sets the case of several selected boxes at once', () => {
+    const { store, inspectorHost } = setup([
+      textElement('text-1', { style: { 'text-transform': 'uppercase' } }),
+      textElement('text-2', { y: 300 }),
+    ]);
+    const caseField = field(inspectorHost, 'Case');
+    expect(caseField.querySelector('.segment-button.is-active')).toBeNull();
+    caseField.querySelector<HTMLButtonElement>('.segment-button[title="All lowercase"]')!.click();
+    expect(textOf(store, 'text-1').style['text-transform']).toBe('lowercase');
+    expect(textOf(store, 'text-2').style['text-transform']).toBe('lowercase');
   });
 
   it('has no list indent for a box without a list', () => {

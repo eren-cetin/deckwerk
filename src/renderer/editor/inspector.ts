@@ -53,7 +53,9 @@ import {
   setWholeTextAlignment,
   setWholeTextColor,
   setWholeTextFormat,
+  setWholeTextCase,
   setWholeTextParagraphSpacing,
+  type TextCase,
   setWholeTextStyle,
   wholeTextFormatState,
   applyTextRole,
@@ -171,6 +173,7 @@ export class Inspector {
     fittedFontSize: number | null;
     paragraphSpacing: number | null;
     listIndent: number | null;
+    textTransform: string | null;
   };
   onInsertTableColumn?: (after: boolean) => void;
   onDeleteTableColumn?: () => void;
@@ -1227,6 +1230,12 @@ export class Inspector {
         clear: paint.clear,
       },
     ));
+    wrap.appendChild(textCaseField(
+      texts.map((text, index) => computedTypography[index]?.textTransform ?? text.style['text-transform'] ?? null),
+      (value) => this.store.updateSelected((element) => {
+        if (element.type === 'text') setWholeTextCase(element, value);
+      }, { label: `Change case to ${TEXT_CASES.find((choice) => choice.value === value)!.title.toLowerCase()}` }),
+    ));
     wrap.appendChild(alignButtonsField(
       'Align',
       commonValue(texts.map((text) => text.align)),
@@ -1893,6 +1902,12 @@ export class Inspector {
         } else {
           typography.content.appendChild(colour);
         }
+        typography.content.appendChild(textCaseField(
+          [computedTypography?.textTransform ?? el.style['text-transform'] ?? null],
+          (value) => this.store.updateSelected((target) => {
+            if (target.type === 'text') setWholeTextCase(target, value);
+          }, { label: `Change case to ${TEXT_CASES.find((choice) => choice.value === value)!.title.toLowerCase()}` }),
+        ));
         const alignment = document.createElement('div');
         alignment.className = 'compact-field-row';
         alignment.appendChild(
@@ -2970,6 +2985,27 @@ const SHAPE_KIND_GLYPHS = {
  * and is visually hidden; the buttons are its face. Each button sets the
  * select and dispatches `change`, so there is one code path for both.
  */
+/** The Case strip's choices, in the order they read. */
+const TEXT_CASES: Array<{ value: TextCase; title: string; text: string }> = [
+  { value: 'none', title: 'As typed', text: 'As is' },
+  { value: 'uppercase', title: 'All capitals', text: 'ABC' },
+  { value: 'lowercase', title: 'All lowercase', text: 'abc' },
+  { value: 'capitalize', title: 'Capitalize each word', text: 'Abc' },
+];
+
+/**
+ * The Case strip: the case a box's letters are drawn in, whatever was typed.
+ * Shows the case the box is drawn in now, its own or a theme class's; boxes
+ * that differ show no choice.
+ */
+function textCaseField(drawn: Array<string | null>, onChange: (value: TextCase) => void): HTMLElement {
+  const current = drawn.map((value) => value && value !== 'none' ? value : 'none');
+  const shared = current.every((value) => value === current[0]) ? current[0] ?? 'none' : '';
+  const field = segmentedSelectField('Case', TEXT_CASES, shared, (value) => onChange(value as TextCase));
+  field.classList.add('text-case');
+  return field;
+}
+
 /** How far one press of the List indent buttons moves, in px. */
 const LIST_INDENT_STEP = 5;
 

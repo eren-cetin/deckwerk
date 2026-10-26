@@ -6452,6 +6452,7 @@ export class EditorCanvas {
     fittedFontSize: number | null;
     paragraphSpacing: number | null;
     listIndent: number | null;
+    textTransform: string | null;
   } {
     const element = this.slideLayer.querySelector<HTMLElement>(
       `[data-element-id="${CSS.escape(elementId)}"]`,
@@ -6482,6 +6483,7 @@ export class EditorCanvas {
         fittedFontSize: null,
         paragraphSpacing: null,
         listIndent: null,
+        textTransform: null,
       };
     }
     const style = getComputedStyle(target);
@@ -6531,6 +6533,7 @@ export class EditorCanvas {
       fittedFontSize: Number.isFinite(fittedFontSize) ? fittedFontSize : null,
       paragraphSpacing: Number.isFinite(paragraphSpacing) ? paragraphSpacing : 0,
       listIndent: listIndentOf(node),
+      textTransform: getComputedStyle(node).textTransform || null,
     };
   }
 
