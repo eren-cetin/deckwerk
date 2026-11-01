@@ -5,6 +5,7 @@ import { fitAutoTextElement } from './autoFit.js';
 import { KATEX_AUTO_RENDER_JS, KATEX_CSS, KATEX_JS } from './katexInline.js';
 import { shapeSvg } from './shapeSvg.js';
 import { applyTableColumnWidths } from './paragraphs.js';
+import { mathbbMacro } from './katexMacros.js';
 import {
   customLayout,
   isBuiltInLayout,
@@ -282,6 +283,7 @@ const PREVIEW_CSS = `
 export function renderAuthoredMath(
   doc: Document,
   renderMath: (el: Element, opts: unknown) => void,
+  macros: Record<string, unknown>,
 ): void {
   if (!doc.body) return;
   const escapedDollar = '\uE000';
@@ -298,6 +300,7 @@ export function renderAuthoredMath(
     ],
     throwOnError: false,
     strict: 'ignore',
+    macros,
   });
   const restore = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   while (restore.nextNode()) {
@@ -337,10 +340,11 @@ export const KATEX_PAGE_HTML = `<style data-katex-inline>${KATEX_CSS}</style>
 <script>${escapeInlineScript(KATEX_JS)}</script>
 <script>${escapeInlineScript(KATEX_AUTO_RENDER_JS)}</script>
 <script>${renderAuthoredMath.toString()}
+${mathbbMacro.toString()}
 (() => {
   const run = () => {
     const render = globalThis.renderMathInElement;
-    if (render) renderAuthoredMath(document, render);
+    if (render) renderAuthoredMath(document, render, { '\\\\mathbb': ${mathbbMacro.name} });
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
   else run();

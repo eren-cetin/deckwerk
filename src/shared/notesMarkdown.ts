@@ -1,5 +1,6 @@
 import katex from 'katex';
 import { Marked, type TokenizerAndRendererExtension, type Tokens } from 'marked';
+import { katexMacros } from './katexMacros.js';
 
 /**
  * Speaker notes are Markdown (see `speakerNotes.ts`); this turns one slide's
@@ -39,7 +40,9 @@ interface MathToken extends Tokens.Generic {
 function renderMath(tex: string, displayMode: boolean): string {
   // KaTeX's `trust` defaults to false, so \href, \url and \htmlClass stay
   // inert; a malformed formula renders as red source instead of throwing.
-  return katex.renderToString(tex, { displayMode, throwOnError: false, strict: 'ignore', output: 'html' });
+  return katex.renderToString(tex, {
+    displayMode, throwOnError: false, strict: 'ignore', output: 'html', macros: katexMacros(),
+  });
 }
 
 /** A `$$…$$` block on lines of its own, which may span blank-free lines. */

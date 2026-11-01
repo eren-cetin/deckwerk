@@ -12,8 +12,10 @@ import { applyTableColumnWidths } from '@shared/paragraphs.js';
 import { isEmbeddableWebSrc } from '@shared/webBridge.js';
 import { pageNumberLabel } from '@shared/pageNumbers.js';
 import { hasUnclosedMath, joinMathAcrossRuns } from './mathRuns.js';
+import { katexMacros } from '@shared/katexMacros.js';
 import renderMathInElement from 'katex/contrib/auto-render';
 import 'katex/dist/katex.min.css';
+import './katexDoubleStruck.css';
 
 /**
  * deck.json -> DOM.
@@ -731,6 +733,7 @@ function renderBody(el: SlideElement, opts: RenderOptions): HTMLElement | SVGEle
         ],
         throwOnError: false,
         strict: 'ignore',
+        macros: katexMacros(),
       });
       // A `$` no formula claimed is an equation that never closed; say so for
       // the editor's warnings while escaped dollars are still masked, so a

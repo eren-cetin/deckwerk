@@ -1,5 +1,6 @@
 import katex from 'katex';
 import type { SlideElement } from '@shared/deck.js';
+import { katexMacros } from '@shared/katexMacros.js';
 import type { EditorStore } from './store.js';
 
 /**
@@ -58,7 +59,7 @@ function boxName(element: SlideElement | undefined): string {
 /** KaTeX's complaint about a formula when read strictly, or null when it reads cleanly. */
 function strictKatexProblem(source: string, displayMode: boolean): string | null {
   try {
-    katex.renderToString(source, { throwOnError: true, strict: 'ignore', displayMode });
+    katex.renderToString(source, { throwOnError: true, strict: 'ignore', displayMode, macros: katexMacros() });
     return null;
   } catch (error) {
     return cleanKatexMessage(error instanceof Error ? error.message : String(error));

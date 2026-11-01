@@ -1,0 +1,32 @@
+/*
+ * Double-struck digits (U+1D7D8–1D7E1) and lowercase letters (U+1D552–1D56B),
+ * which KaTeX has no glyphs for; `mathbbMacro` (src/shared/katexMacros.ts)
+ * spells `\mathbb{1}` and friends as these characters. The faces join KaTeX's
+ * own families for exactly these code points, so the characters draw from the
+ * shipped font on every machine instead of whatever system font has them.
+ *
+ * fonts/DeckWerkDoubleStruck.woff2 is a renamed subset of STIX Two Math 2.13
+ * (SIL OFL 1.1, fonts/DeckWerkDoubleStruck-OFL.txt), made with:
+ *   pyftsubset STIXTwoMath.otf --unicodes="U+1D552-1D56B,U+1D7D8-1D7E1" \
+ *     --flavor=woff2 --layout-features='' --no-hinting --desubroutinize
+ *
+ * scripts/build-katex-inline.mts inlines this file into the exported
+ * authoring page's KaTeX stylesheet.
+ */
+@font-face {
+  font-display: block;
+  font-family: KaTeX_Main;
+  font-style: normal;
+  font-weight: 400;
+  src: url(fonts/DeckWerkDoubleStruck.woff2) format("woff2");
+  unicode-range: U+1D7D8-1D7E1, U+1D552-1D56B;
+}
+
+@font-face {
+  font-display: block;
+  font-family: KaTeX_AMS;
+  font-style: normal;
+  font-weight: 400;
+  src: url(fonts/DeckWerkDoubleStruck.woff2) format("woff2");
+  unicode-range: U+1D7D8-1D7E1, U+1D552-1D56B;
+}

@@ -12,6 +12,7 @@ import {
   slidesFromMeasured,
 } from '@shared/htmlSlides.js';
 import { PLAYER_TYPE_CSS } from '@shared/playerTypeCss.js';
+import { katexMacros } from '@shared/katexMacros.js';
 import { browserDeckRevision } from './agentBridge.js';
 import { sanitizeAuthoredHtml, type HtmlSanitizationReport } from '@shared/htmlSafety.js';
 
@@ -80,7 +81,7 @@ export async function compileAuthoredHtml(
     // KaTeX, against the frame's document. The page's inlined KaTeX *style*
     // still applies (its fonts are data: URIs), which is what makes the
     // rendered maths measure the same here as in any other browser.
-    renderAuthoredMath(doc, renderMathInElement as (el: Element, opts: unknown) => void);
+    renderAuthoredMath(doc, renderMathInElement as (el: Element, opts: unknown) => void, katexMacros());
 
     // An image that has not arrived measures as nothing and a font that has
     // not arrived measures as the fallback — either one bakes wrong geometry
