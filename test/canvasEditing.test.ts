@@ -2342,6 +2342,25 @@ describe('native line endpoint editing', () => {
     expect(elementContainsPoint(text, { x: 320, y: 300 })).toBe(false);
   });
 
+  it('hits a solid fill written as rgb() whose blue channel is 0', () => {
+    // The last number of rgb(r, g, b) is blue, not alpha: red, orange, yellow
+    // and green written this way were read as fully transparent and could not
+    // be clicked.
+    const filled = (fill: string) => ({
+      id: 'box', type: 'shape' as const, shape: 'rect' as const, x: 100, y: 100, w: 200, h: 100,
+      rot: 0, z: 1, opacity: 1, class: [], style: {}, fill, stroke: null, strokeWidth: 0,
+      radius: 0, path: null, pathSize: null, arrowStart: false, arrowEnd: false,
+    });
+    const centre = { x: 200, y: 150 };
+    expect(elementContainsPoint(filled('rgb(255, 0, 0)'), centre)).toBe(true);
+    expect(elementContainsPoint(filled('rgb(255 128 0)'), centre)).toBe(true);
+    expect(elementContainsPoint(filled('hsl(120, 50%, 0%)'), centre)).toBe(true);
+    // Soundness: a real zero alpha, in every spelling, is still see-through.
+    expect(elementContainsPoint(filled('rgba(255, 0, 0, 0)'), centre)).toBe(false);
+    expect(elementContainsPoint(filled('rgb(255 0 0 / 0%)'), centre)).toBe(false);
+    expect(elementContainsPoint(filled('rgba(255, 0, 0, 0.5)'), centre)).toBe(true);
+  });
+
   it('hits an unfilled rectangle only near its visible stroke', () => {
     const frame = {
       id: 'frame', type: 'shape' as const, shape: 'rect' as const,

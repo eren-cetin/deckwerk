@@ -7295,8 +7295,11 @@ function visiblePaint(value: string | null): boolean {
   if (!value) return false;
   const paint = value.trim().toLowerCase();
   if (!paint || paint === 'none' || paint === 'transparent') return false;
-  const alpha = paint.match(/^rgba?\([^)]*[,/]\s*([\d.]+)%?\s*\)$/)?.[1];
-  return alpha === undefined || Number(alpha) > 0;
+  // Only a fourth component is alpha: `rgb(255, 0, 0)` ends in its blue.
+  const args = paint.match(/^(?:rgba?|hsla?)\(([^)]*)\)$/)?.[1];
+  if (args === undefined) return true;
+  const alpha = args.includes('/') ? args.split('/')[1] : args.split(',')[3];
+  return alpha === undefined || Number.parseFloat(alpha) > 0;
 }
 
 function distanceToSegment(
