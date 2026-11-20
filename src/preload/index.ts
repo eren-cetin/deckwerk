@@ -4,6 +4,7 @@ import type { Deck } from '@shared/deck.js';
 import type { DeckHistoryDocument } from '@shared/deckHistory.js';
 import type { ClipboardReadResult, ClipboardWriteRequest } from '@shared/clipboard.js';
 import type { ClipboardImageSource } from '@shared/clipboardImages.js';
+import type { CopyImageJob, CopyImageRequest, CopyImageResult } from '@shared/copyImage.js';
 import { IPC, type TemplateCommand, type TemplateSaveResult, type TemplateSummary } from '@shared/ipc.js';
 import type { DeckTemplate } from '@shared/deckTemplates.js';
 import type {
@@ -122,6 +123,11 @@ const api = {
     ipcRenderer.invoke(IPC.clipboardWrite, request),
   readClipboard: (): Promise<ClipboardReadResult | null> =>
     ipcRenderer.invoke(IPC.clipboardRead),
+  /** A PNG of the selection for other apps; see shared/copyImage.ts. */
+  writeClipboardImage: (request: CopyImageRequest): Promise<CopyImageResult> =>
+    ipcRenderer.invoke(IPC.clipboardWriteImage, request),
+  copyImageJob: (jobId: string): Promise<CopyImageJob | null> => ipcRenderer.invoke(IPC.copyImageJob, jobId),
+  onCopyAsImage: (fn: () => void): (() => void) => on(IPC.editCopyAsImage, fn),
 
   importAssets: (paths: string[], progressToken?: string): Promise<ImportedAsset[]> =>
     ipcRenderer.invoke(IPC.assetImport, paths, progressToken),

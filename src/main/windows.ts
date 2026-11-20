@@ -325,6 +325,32 @@ export function createPdfWindow(query: string): BrowserWindow {
   return win;
 }
 
+/**
+ * The hidden page Copy as Image draws a selection in: the print page, sized
+ * to the picture. Offscreen, because a hidden window gets no compositor
+ * frames to capture and an offscreen one is not clamped to the screen.
+ */
+export function createCopyImageWindow(query: string, width: number, height: number): BrowserWindow {
+  const win = new BrowserWindow({
+    width,
+    height,
+    useContentSize: true,
+    show: false,
+    frame: false,
+    enableLargerThanScreen: true,
+    backgroundColor: '#000000',
+    webPreferences: {
+      offscreen: true,
+      preload: preload(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  loadRenderer(win, 'print', query);
+  return win;
+}
+
 export function createTrimWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1100,

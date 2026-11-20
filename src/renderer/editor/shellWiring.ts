@@ -23,6 +23,7 @@ import {
   type TextFormat,
 } from './textFormatting.js';
 import { showPasteThemeDialog } from './pasteThemeDialog.js';
+import { copyImageSlide } from '@shared/copyImage.js';
 
 /**
  * Shell-independent wiring shared by the Electron editor and the browser
@@ -159,6 +160,8 @@ export interface ClipboardActions {
   pasteClipboardFiles?: (files: File[]) => Promise<void>;
   /** Paste the in-window copy when the native paste event holds nothing of ours. */
   pasteInAppClipboard?: () => Promise<void>;
+  /** Desktop only: a picture of the selection on the OS clipboard, for other apps. */
+  copyAsImage?: () => Promise<void>;
 }
 
 /**
@@ -211,6 +214,31 @@ export function createClipboardActions(deps: ShellDeps): ClipboardActions {
     if (pasted) setStatusMessage('Pasted 1 element.');
   };
 
+  const writeImage = (window.api as Partial<Window['api']>).writeClipboardImage;
+  const copyAsImage = writeImage && (async () => {
+    const selected = store.selectedElements();
+    const slide = store.slide;
+    if (!slide || selected.length === 0) {
+      setStatusMessage('Select the objects to copy as an image.');
+      return;
+    }
+    const n = selected.length;
+    const noun = `${n} object${n > 1 ? 's' : ''}`;
+    const copy = () => writeImage({
+      slide: copyImageSlide(slide, selected),
+      canvas: store.get().deck.canvas,
+    });
+    try {
+      const { width, height } = deps.runOperation
+        ? await deps.runOperation(`Rendering ${noun} as an image`, copy)
+        : await copy();
+      setStatusMessage(`Copied ${noun} as a ${width} × ${height} px image.`);
+    } catch (err) {
+      console.error('Copy as Image failed:', err);
+      setStatusMessage(`Could not copy as an image: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
   return {
     copyToClipboard,
     cutToClipboard,
@@ -218,6 +246,7 @@ export function createClipboardActions(deps: ShellDeps): ClipboardActions {
     pasteClipboardData,
     pasteClipboardFiles,
     pasteInAppClipboard: pasteInApp,
+    copyAsImage,
   };
 }
 
@@ -451,6 +480,12 @@ export function bindEditorKeys(deps: ShellDeps, clipboard: ClipboardActions): vo
       else store.selectAllElements();
       return;
     }
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'c' && clipboard.copyAsImage) {
+      if (hasNativeCopySelection()) return;
+      e.preventDefault();
+      void clipboard.copyAsImage();
+      return;
+    }
     if (mod && e.key.toLowerCase() === 'c') {
       if (hasNativeCopySelection()) return;
       // In the Web UI the key is left to Chromium so that its `copy` event
@@ -551,6 +586,10 @@ export function makeContextActions(
         { label: 'Cut', action: () => void cutSelectionToClipboard(store) },
         { label: 'Copy', action: () => void copySelectionToClipboard(store) },
       );
+      if (clipboard.copyAsImage) {
+        const copyAsImage = clipboard.copyAsImage;
+        items.push({ label: 'Copy as Image', action: () => void copyAsImage() });
+      }
     }
     items.push({ label: 'Paste', action: () => void clipboard.pasteClipboard() });
     if (el) {

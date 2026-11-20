@@ -1270,6 +1270,8 @@ const shellDeps: ShellDeps = {
   },
 };
 const clipboard = createClipboardActions(shellDeps);
+// Edit › Copy as Image; the page owns ⇧⌘C, the menu shows it.
+window.api.onCopyAsImage(() => void clipboard.copyAsImage?.());
 
 /* --- status bar --- */
 

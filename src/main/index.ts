@@ -19,6 +19,13 @@ import {
 } from '@shared/clipboard.js';
 import { importClipboardImageUrl, importImageSource } from './clipboardImageFetch.js';
 import type { ClipboardImageSource } from '@shared/clipboardImages.js';
+import {
+  copyImageScale,
+  selectionBounds,
+  type CopyImageJob,
+  type CopyImageRequest,
+  type CopyImageResult,
+} from '@shared/copyImage.js';
 import { IPC, type TemplateSaveResult, type TemplateSummary } from '@shared/ipc.js';
 import type { DeckTemplate } from '@shared/deckTemplates.js';
 import {
@@ -101,6 +108,7 @@ import {
 import {
   cascadedEditorBounds,
   createEditorWindow,
+  createCopyImageWindow,
   createPdfWindow,
   createPresentWindow,
   createPresenterWindow,
@@ -953,6 +961,53 @@ function registerHandlers(): void {
     }
     const payload = { format: CLIPBOARD_FORMAT, version: 1, ...request, assets };
     clipboard.writeBuffer(CLIPBOARD_FORMAT, Buffer.from(JSON.stringify(payload), 'utf8'));
+  });
+
+  // Copy as Image: draw the selection in a hidden print page cropped to it,
+  // and put the capture on the pasteboard as the only thing there, which is
+  // what other apps paste. See shared/copyImage.ts.
+  const copyImageJobs = new Map<string, CopyImageJob>();
+  ipcMain.handle(IPC.copyImageJob, (_event, jobId: string): CopyImageJob | null => copyImageJobs.get(jobId) ?? null);
+  ipcMain.handle(IPC.clipboardWriteImage, async (event, request: CopyImageRequest): Promise<CopyImageResult> => {
+    const owner = requireOwner(event);
+    const bounds = selectionBounds(request.slide.elements, request.canvas);
+    // The window renders at the display's scale factor, so lay the page out
+    // that much smaller: the capture then has copyImageScale px per canvas px.
+    const scale = copyImageScale(bounds) / screen.getPrimaryDisplay().scaleFactor;
+    const width = Math.round(bounds.w * scale);
+    const height = Math.round(bounds.h * scale);
+    const jobId = randomUUID();
+    copyImageJobs.set(jobId, { ...request, bounds, scale });
+    const ready = new Promise<void>((resolveReady, reject) => {
+      const timer = setTimeout(() => {
+        ipcMain.off(IPC.exportPdfReady, listener);
+        reject(new Error('The picture did not finish rendering'));
+      }, 30_000);
+      const listener = (_readyEvent: Electron.IpcMainEvent, readyJobId: string) => {
+        if (readyJobId !== jobId) return;
+        clearTimeout(timer);
+        ipcMain.off(IPC.exportPdfReady, listener);
+        resolveReady();
+      };
+      ipcMain.on(IPC.exportPdfReady, listener);
+    });
+    const win = createCopyImageWindow(`?image=${encodeURIComponent(jobId)}`, width, height);
+    // The page loads the theme and assets of the deck it belongs to.
+    attachWindow(owner, win);
+    try {
+      await ready;
+      const renderError = await win.webContents.executeJavaScript(
+        'document.documentElement.dataset.error || ""',
+      ) as string;
+      if (renderError) throw new Error(renderError);
+      const image = await win.webContents.capturePage({ x: 0, y: 0, width, height });
+      if (image.isEmpty()) throw new Error('The picture came out empty');
+      clipboard.writeImage(image);
+      return image.getSize();
+    } finally {
+      copyImageJobs.delete(jobId);
+      if (!win.isDestroyed()) win.destroy();
+    }
   });
 
   // Paste: validate whatever is on the pasteboard, then re-import each

@@ -31,6 +31,12 @@ export const IPC = {
   assetImportProgress: 'asset:importProgress',
   clipboardWrite: 'clipboard:write',
   clipboardRead: 'clipboard:read',
+  /** Editor → main: put a picture of the selected objects on the OS clipboard. */
+  clipboardWriteImage: 'clipboard:writeImage',
+  /** Capture page → main: the copy job it was opened for. */
+  copyImageJob: 'clipboard:copyImageJob',
+  /** Main → editor: Edit › Copy as Image was chosen from the menu. */
+  editCopyAsImage: 'edit:copyAsImage',
   assetProbe: 'asset:probe',
   presentOpen: 'present:open',
   displayList: 'display:list',

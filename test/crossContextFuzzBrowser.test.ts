@@ -139,7 +139,8 @@ type OpName =
   | 'click' | 'shift-click' | 'double-click text' | 'double-click image then text'
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
-  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case' | 'image caption';
+  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case' | 'image caption'
+  | 'copy as image';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -397,6 +398,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.elements.includes(LIST)) add('list indent', 1);
   if (pre.elements.includes(PARA)) add('text case', 1);
   if (pre.elements.includes(IMAGE)) add('image caption', 1);
+  if (pre.editing === null && pre.selection.length > 0) add('copy as image', 1);
   add('undo', 2);
   add('redo', 1);
   add('undo round-trip', 1);
@@ -800,6 +802,27 @@ async function performOp(
       for (const [id, text] of Object.entries(after)) {
         if (texts[id] !== undefined && texts[id] !== text) {
           flag('routing', `captioning the picture changed ${id}: "${texts[id]}" -> "${text}"`);
+        }
+      }
+      return 'same';
+    }
+    case 'copy as image': {
+      // ⇧⌘C is a picture for other apps (desktop only); here, as on the
+      // desktop, it must not touch the deck or the selection it pictures.
+      const texts = await session.allTexts();
+      const ids = await session.allElementIds();
+      const { selection } = await session.state();
+      await session.chord('C', 'KeyC', 67, MOD | SHIFT);
+      await wait(120);
+      const after = await session.state();
+      if (after.selection.join() !== selection.join()) {
+        flag('routing', `⇧⌘C changed the selection: ${selection.join()} -> ${after.selection.join()}`);
+      }
+      if ((await session.allElementIds()).join() !== ids.join()) flag('routing', '⇧⌘C added or removed objects');
+      const textsAfter = await session.allTexts();
+      for (const [id, text] of Object.entries(textsAfter)) {
+        if (texts[id] !== undefined && texts[id] !== text) {
+          flag('routing', `⇧⌘C changed ${id}: "${texts[id]}" -> "${text}"`);
         }
       }
       return 'same';

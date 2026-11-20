@@ -69,6 +69,14 @@ export function installAppMenu(actions: AppMenuActions): void {
         { type: 'separator' },
         { role: 'cut' },
         { role: 'copy' },
+        // A PNG of the selected objects, which other apps can paste; the
+        // ordinary copy holds objects only DeckWerk reads. The page owns ⇧⌘C.
+        {
+          label: 'Copy as Image',
+          accelerator: 'Shift+CmdOrCtrl+C',
+          registerAccelerator: false,
+          click: (_item, window) => menuTarget(window)?.webContents.send(IPC.editCopyAsImage),
+        },
         { role: 'paste' },
         // ⇧⌘V, where the Mac's own ⌥⇧⌘V is hard to reach. The page owns the
         // key (it needs to know a paste is meant plain); the menu shows it.
