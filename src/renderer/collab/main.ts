@@ -58,6 +58,8 @@ import { trackVideoLoading } from '../player/videoLoadingProgress.js';
 import { DelayedOperationProgress } from '../editor/operationProgress.js';
 import { DesignWorkspace } from '../editor/designWorkspace.js';
 import { installResponsiveToolbar } from '../editor/responsiveToolbar.js';
+import { deckPathParts } from '../editor/deckPath.js';
+import { openContextMenu } from '../editor/contextMenuPlacement.js';
 
 /**
  * Browser collaboration shell: the same canvas, rail, inspector, theme
@@ -617,6 +619,57 @@ async function exportWeb(): Promise<void> {
   setStatusMessage('Building the web export — the download starts when the server is done.');
 }
 
+let deckNameLabel: HTMLButtonElement | null = null;
+
+/**
+ * The deck's place on the server beside the logo: the folders leading to it,
+ * then its own folder name, which never truncates. Decks here are server
+ * folders, so the path is the deck id and there is no home to shorten.
+ */
+function syncDeckNameLabel(): void {
+  if (!deckNameLabel || !deckId) return;
+  const { parent, name } = deckPathParts(deckId);
+  deckNameLabel.title = `${deckId}\nClick to copy a link or open its folder`;
+  deckNameLabel.setAttribute('aria-label', `Presentation ${deckId}`);
+  deckNameLabel.querySelector<HTMLElement>('.bar-deck-parent > bdi')!.textContent = parent;
+  deckNameLabel.querySelector<HTMLElement>('.bar-deck-parent')!.hidden = parent === '';
+  deckNameLabel.querySelector<HTMLElement>('.bar-deck-folder')!.textContent = name;
+}
+
+function openDeckPathMenu(anchor: HTMLElement): void {
+  if (!deckId) return;
+  document.getElementById('ctx-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.id = 'ctx-menu';
+  const item = (label: string, action: () => void) => {
+    const row = document.createElement('button');
+    row.textContent = label;
+    row.addEventListener('click', () => {
+      menu.remove();
+      action();
+    });
+    menu.appendChild(row);
+  };
+  item('Copy link', () => {
+    void copyText(location.href).then(
+      () => setStatusMessage('Copied the link to this presentation'),
+      () => setStatusMessage(`Could not copy — link: ${location.href}`),
+    );
+  });
+  if (!serverConfig.hosted) {
+    item('Open folder…', () => showDeckPicker({
+      dismissable: true,
+      onStatus: setStatusMessage,
+      access: serverConfig.access ?? null,
+      folder: folderOf(deckId ?? ''),
+    }));
+  }
+  const box = anchor.getBoundingClientRect();
+  openContextMenu(menu, { x: box.left, y: box.bottom + 4 });
+  menu.addEventListener('pointerdown', (event) => event.stopPropagation());
+  setTimeout(() => document.addEventListener('pointerdown', () => menu.remove(), { once: true }), 0);
+}
+
 function buildToolbar(): void {
   const bar = el('toolbar');
   bar.replaceChildren();
@@ -629,9 +682,18 @@ function buildToolbar(): void {
     line.setAttribute('aria-hidden', 'true');
     return line;
   };
-  const deckName = document.createElement('span');
+  const deckName = document.createElement('button');
+  deckName.type = 'button';
   deckName.className = 'bar-deck-name';
-  deckName.textContent = deckId;
+  const parentPath = document.createElement('span');
+  parentPath.className = 'bar-deck-parent';
+  parentPath.appendChild(document.createElement('bdi'));
+  const folderName = document.createElement('span');
+  folderName.className = 'bar-deck-folder';
+  deckName.append(parentPath, folderName);
+  deckName.addEventListener('click', () => openDeckPathMenu(deckName));
+  deckNameLabel = deckName;
+  syncDeckNameLabel();
   left.append(createDeckWerkButton(), deckName, divider());
   const fileActions = document.createElement('span');
   fileActions.className = 'toolbar-expanded-file-actions';
@@ -667,6 +729,8 @@ function buildToolbar(): void {
         label: 'Presentation',
         options: [
           { label: 'New', action: createDeck },
+          // A browser cannot place a window, so this is a tab on the picker.
+          { label: 'New Window', action: () => void window.open(location.pathname, '_blank') },
           { label: 'Open…', action: openDeck },
         ],
       },

@@ -705,7 +705,7 @@ async function performOp(
       // with nothing changed.
       const texts = await session.allTexts();
       const visible = await session.cdp.evaluate<boolean>(`(() => {
-        // The browser client's label is the server's deck name, plain text.
+        // The compact toolbar hides the label in a narrow window.
         const label = document.querySelector('button.bar-deck-name');
         return Boolean(label) && getComputedStyle(label).display !== 'none';
       })()`);
@@ -714,8 +714,10 @@ async function performOp(
         await wait(80);
         const rows = await session.cdp.evaluate<string[]>(
           `[...document.querySelectorAll('#ctx-menu button')].map((row) => row.textContent)`);
-        if (rows.join() !== 'Show in Finder,Copy path,Rename…') flag('routing', `the deck folder menu offered ${rows.join(', ') || 'nothing'}`);
-        if (next() < 0.5) {
+        // The browser's server folder has no Finder or local path to offer.
+        const offered = rows.filter((row) => row !== 'Rename…').join();
+        if (offered !== 'Copy link,Open folder…') flag('routing', `the deck folder menu offered ${rows.join(', ') || 'nothing'}`);
+        if (rows.includes('Rename…') && next() < 0.5) {
           // Rename… opens its dialog, and Escape puts it away with the deck
           // left where it was.
           const dir = await session.cdp.evaluate<string>(`document.querySelector('.bar-deck-name')?.title.split('\\n')[0] ?? ''`);
