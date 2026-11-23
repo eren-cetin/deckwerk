@@ -10,7 +10,9 @@ import type { PrintPage } from './pages.js';
  * settled exactly like a PDF page, so the picture matches the exported PDF.
  *
  * Unlike a PDF page it is captured, never printed, so the transform that
- * would upset print scaling (see printPageRule) is safe here.
+ * would upset print scaling (see printPageRule) is safe here. The slide's
+ * background is left out (print.css, `.copy-image`): the picture is of the
+ * objects, to be pasted over another slide.
  */
 export function buildImagePage(
   container: HTMLElement,
@@ -18,6 +20,7 @@ export function buildImagePage(
   resolveSrc: (src: string) => string,
 ): PrintPage {
   const { bounds, scale, canvas, slide } = job;
+  document.documentElement.classList.add('copy-image');
   const page = document.createElement('section');
   page.className = 'pdf-page';
   page.style.width = `${Math.round(bounds.w * scale)}px`;

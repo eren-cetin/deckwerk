@@ -338,7 +338,10 @@ export function createCopyImageWindow(query: string, width: number, height: numb
     show: false,
     frame: false,
     enableLargerThanScreen: true,
-    backgroundColor: '#000000',
+    // The picture is captured with its alpha, so it pastes over whatever
+    // slide it lands on rather than as a coloured rectangle.
+    transparent: true,
+    backgroundColor: '#00000000',
     webPreferences: {
       offscreen: true,
       preload: preload(),

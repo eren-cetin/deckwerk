@@ -18,3 +18,14 @@ html, body { margin: 0; padding: 0; background: #000; }
 @media print {
   html, body, #pages { background: transparent; }
 }
+
+/* Copy as Image: only the objects, over transparency. `!important` because
+   the slide's own background is an inline style and the theme's is a rule. */
+.copy-image,
+.copy-image body,
+.copy-image #pages,
+.copy-image .pdf-page,
+.copy-image .pdf-stage,
+.copy-image .slide {
+  background: transparent !important;
+}

@@ -23,7 +23,7 @@ import {
 
 /**
  * Copy as Image in the real desktop app: ⇧⌘C puts a PNG of the selected
- * objects, over the slide's background, on the OS pasteboard, where
+ * objects, on a transparent background, on the OS pasteboard, where
  * PowerPoint and Keynote find it. The pasteboard is read in the main process,
  * the way another app would read it.
  */
@@ -70,13 +70,13 @@ const READ_IMAGE = (points: Array<[number, number]>) => `(() => {
   const bitmap = image.toBitmap();
   const rgb = ${JSON.stringify(points)}.map(([x, y]) => {
     const i = (y * width + x) * 4;
-    return [bitmap[i + 2], bitmap[i + 1], bitmap[i]];
+    return [bitmap[i + 2], bitmap[i + 1], bitmap[i], bitmap[i + 3]];
   });
   return { width, height, rgb };
 })()`;
 
 describe.skipIf(!electronBinary)('Copy as Image in the desktop app', () => {
-  it('puts a picture of only the selected objects on the pasteboard with ⇧⌘C', {
+  it('puts a transparent picture of only the selected objects on the pasteboard with ⇧⌘C', {
     retry: 2,
     timeout: 120_000,
   }, async () => {
@@ -135,7 +135,7 @@ describe.skipIf(!electronBinary)('Copy as Image in the desktop app', () => {
     const picture = await eventually(
       () => inMain<{ width: number; height: number; rgb: number[][] } | null>(READ_IMAGE([
         [(pad + 200) * s, (pad + 100) * s], // the red box's centre
-        [2, 2], // padding: the slide background
+        [2, 2], // padding: transparent, not the slide background
         [(pad + 400 + 10) * s, (pad + 100) * s], // where the unselected blue box is
       ])),
       'nothing reached the pasteboard',
@@ -143,8 +143,8 @@ describe.skipIf(!electronBinary)('Copy as Image in the desktop app', () => {
     );
     expect(picture).toMatchObject({ width: (400 + 2 * pad) * s, height: (200 + 2 * pad) * s });
     const [red, background, besides] = picture!.rgb;
-    expect(red).toEqual([255, 0, 0]);
-    expect(background).toEqual([16, 32, 48]);
-    expect(besides).toEqual([16, 32, 48]);
+    expect(red).toEqual([255, 0, 0, 255]);
+    expect(background[3]).toBe(0);
+    expect(besides[3]).toBe(0);
   });
 });

@@ -1,8 +1,8 @@
 import type { Slide, SlideElement } from './deck.js';
 
 /**
- * Copy as Image: the selected objects drawn over their slide's background,
- * cropped to the selection, as a PNG on the OS clipboard.
+ * Copy as Image: the selected objects on a transparent background, cropped
+ * to the selection, as a PNG on the OS clipboard.
  *
  * The ordinary copy carries the objects themselves under a private pasteboard
  * format, which only DeckWerk reads; PowerPoint, Keynote, Word and mail
@@ -11,7 +11,7 @@ import type { Slide, SlideElement } from './deck.js';
  * picture is its own command.
  */
 
-/** Background left around the selection, in canvas px: room for shadows and strokes. */
+/** Transparent margin left around the selection, in canvas px: room for shadows and strokes. */
 export const COPY_IMAGE_PADDING = 16;
 
 /** The image's pixels per canvas px, so a pasted picture stays sharp when enlarged. */
@@ -85,7 +85,7 @@ export function copyImageScale(bounds: Bounds): number {
   return Math.min(COPY_IMAGE_SCALE, COPY_IMAGE_MAX_SIDE / Math.max(bounds.w, bounds.h));
 }
 
-/** The slide a picture of `selected` is drawn from: its background and layout, those objects, no builds. */
+/** The slide a picture of `selected` is drawn from: its layout and theme, those objects, no builds. */
 export function copyImageSlide(slide: Slide, selected: readonly SlideElement[]): Slide {
   return { ...slide, elements: [...selected], timeline: [] };
 }
