@@ -3,6 +3,7 @@ import { deckPathParts } from './deckPath.js';
 import { PanelToggles } from './panelToggles.js';
 import { applyTemplateToDeck } from '@shared/deckTemplates.js';
 import { confirmReplaceTemplate, showTemplateNameDialog, showTemplatePicker } from './templateDialogs.js';
+import { showRenameDeckDialog } from './renameDialog.js';
 import '../player/player.css';
 import '../appChrome.css';
 import './editor.css';
@@ -432,7 +433,7 @@ function barDivider(): HTMLElement {
 /**
  * The deck's folder in the toolbar: the path to it, home shortened to ~,
  * trimmed from the left when long so its own name always shows. A click
- * offers to show the folder in Finder or copy its path.
+ * offers to show the folder in Finder, copy its path or rename it.
  */
 function syncDeckNameLabel(): void {
   if (!deckNameLabel) return;
@@ -440,7 +441,7 @@ function syncDeckNameLabel(): void {
   const { parent, name } = deckPathParts(dir, window.api.homeDir);
   const shown = name || deck.title || '';
   deckNameLabel.hidden = shown === '';
-  deckNameLabel.title = dir ? `${dir}\nClick to show in Finder or copy the path` : '';
+  deckNameLabel.title = dir ? `${dir}\nClick to show in Finder, copy the path or rename` : '';
   deckNameLabel.setAttribute('aria-label', dir ? `Deck folder ${dir}` : shown);
   const parentNode = deckNameLabel.querySelector<HTMLElement>('.bar-deck-parent > bdi')!;
   parentNode.textContent = parent;
@@ -474,6 +475,7 @@ function openDeckPathMenu(anchor: HTMLElement): void {
       () => setStatusMessage('Could not copy the path'),
     );
   });
+  item('Rename…', () => void renamePresentation());
   const box = anchor.getBoundingClientRect();
   openContextMenu(menu, { x: box.left, y: box.bottom + 4 });
   menu.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -997,6 +999,32 @@ async function saveAsPresentation(): Promise<void> {
     setStatusMessage(`Saved as ${session.dir}`);
   } catch (err) {
     setStatusMessage(`Save As failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/**
+ * Rename the open deck's folder in place. Everything is saved first, so the
+ * folder that moves holds the document as it stands; the editor then simply
+ * follows it to the new path, keeping undo, selection and the current slide.
+ */
+async function renamePresentation(): Promise<void> {
+  const { dir } = store.get();
+  if (!dir) return;
+  const current = deckPathParts(dir, window.api.homeDir).name;
+  const name = await showRenameDeckDialog(current);
+  if (!name) return;
+  try {
+    const session = await runOperation(`Renaming ${current}…`, async (operation) => {
+      operation.update('Saving deck.json and theme.css');
+      await cssEditor.flush();
+      await save();
+      const renamed = await window.api.renameDeck(name, operation.id);
+      store.moveTo(renamed.dir);
+      return renamed;
+    });
+    setStatusMessage(`Renamed the presentation to ${deckPathParts(session.dir, window.api.homeDir).name}`);
+  } catch (err) {
+    setStatusMessage(`Could not rename the presentation: ${err instanceof Error ? err.message : err}`);
   }
 }
 

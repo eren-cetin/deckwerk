@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, watch } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { BrowserWindow, app, clipboard, ipcMain, screen, shell } from 'electron';
 import type { Display, IpcMainInvokeEvent, WebContents } from 'electron';
 import { parseDeck, type Deck } from '@shared/deck.js';
+import { deckFolderNameProblem } from '@shared/deckRename.js';
 import { installAppMenu, setPanelsChecked, setShowGridChecked } from './appMenu.js';
 import type { DeckHistoryDocument } from '@shared/deckHistory.js';
 import {
@@ -95,6 +96,7 @@ import { AGENT_GUIDE_FILE, defaultLauncherPath, writeAgentGuide } from './agentG
 import {
   attachWindow,
   deckKeyFor,
+  moveDeckKey,
   editorStates,
   forgetEditorWindow,
   isEmptyEditor,
@@ -858,6 +860,51 @@ function registerHandlers(): void {
     reportOperation(event, operationId, 'Opening the saved copy', 0.8);
     // Save As continues one document in one window, so it never spawns another.
     return openSession(requireOwner(event), dir, deck, event);
+  });
+
+  // Rename the deck's folder where it stands and carry on in the same window.
+  // The renderer has already saved, so what is on disk is the document.
+  ipcMain.handle(IPC.deckRename, async (event, name: string, operationId?: string): Promise<DeckSession> => {
+    const state = requireOwner(event);
+    const s = requireSession(event);
+    const trimmed = String(name ?? '').trim();
+    const problem = deckFolderNameProblem(trimmed);
+    if (problem) throw new Error(problem);
+    // An Agent session's server writes deck.json on its own schedule, and the
+    // folder vanishing under it would lose those writes.
+    if (collabOwner === state) throw new Error('End the Agent session before renaming the presentation');
+    const from = s.dir;
+    const to = join(dirname(from), trimmed);
+    if (to === from) return s;
+    // On a case-insensitive disk, "talk" → "Talk" finds the deck itself here.
+    const caseOnly = to.toLowerCase() === from.toLowerCase();
+    if (!caseOnly && existsSync(to)) throw new Error(`There is already a folder named “${trimmed}” there`);
+    reportOperation(event, operationId, `Renaming ${basename(from)} to ${trimmed}`);
+    // Stop watching first: the old folder's watchers would fire on the move.
+    for (const watcher of state.watchers) watcher.close();
+    state.watchers = [];
+    await state.agentRuntime.close();
+    try {
+      await rename(from, to);
+    } catch (error) {
+      watchDeck(state);
+      void state.agentRuntime.open(from);
+      throw error;
+    }
+    // The same document carries on, so nothing is reloaded: the asset host,
+    // the saved-JSON echo guard and the stylesheet all stay, only the path moves.
+    moveDeckKey(from, to);
+    const moved: DeckSession = { dir: to, deck: s.deck };
+    state.session = moved;
+    const written = [...state.lastWrittenHtml];
+    state.lastWrittenHtml.clear();
+    for (const [path, contents] of written) {
+      state.lastWrittenHtml.set(path.startsWith(from + sep) ? to + path.slice(from.length) : path, contents);
+    }
+    watchDeck(state);
+    void state.agentRuntime.open(to);
+    broadcastDeck(state, BrowserWindow.fromWebContents(event.sender));
+    return moved;
   });
 
   ipcMain.handle(IPC.deckLoadTheme, async (event): Promise<string> => {

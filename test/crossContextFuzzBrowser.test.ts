@@ -701,7 +701,8 @@ async function performOp(
     }
     case 'path menu': {
       // The deck folder's menu opens from the toolbar wherever focus is, edits
-      // included, and a press elsewhere puts it away with nothing changed.
+      // included, and a press elsewhere (or Rename… then Escape) puts it away
+      // with nothing changed.
       const texts = await session.allTexts();
       const visible = await session.cdp.evaluate<boolean>(`(() => {
         // The browser client's label is the server's deck name, plain text.
@@ -713,11 +714,31 @@ async function performOp(
         await wait(80);
         const rows = await session.cdp.evaluate<string[]>(
           `[...document.querySelectorAll('#ctx-menu button')].map((row) => row.textContent)`);
-        if (rows.join() !== 'Show in Finder,Copy path') flag('routing', `the deck folder menu offered ${rows.join(', ') || 'nothing'}`);
-        await session.cdp.evaluate(`(document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })), true)`);
-        await wait(80);
-        if (await session.cdp.evaluate<boolean>(`Boolean(document.getElementById('ctx-menu'))`)) {
-          flag('routing', 'the deck folder menu stayed open after a press elsewhere');
+        if (rows.join() !== 'Show in Finder,Copy path,Rename…') flag('routing', `the deck folder menu offered ${rows.join(', ') || 'nothing'}`);
+        if (next() < 0.5) {
+          // Rename… opens its dialog, and Escape puts it away with the deck
+          // left where it was.
+          const dir = await session.cdp.evaluate<string>(`document.querySelector('.bar-deck-name')?.title.split('\\n')[0] ?? ''`);
+          await session.cdp.evaluate(`([...document.querySelectorAll('#ctx-menu button')]
+            .find((row) => row.textContent === 'Rename…')?.click(), true)`);
+          await wait(80);
+          if (!(await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('.deck-rename input'))`))) {
+            flag('routing', 'Rename… did not open its dialog');
+          }
+          await session.cdp.evaluate(`(document.querySelector('.deck-rename input')?.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true)`);
+          await wait(80);
+          if (await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('.deck-rename'))`)) {
+            flag('routing', 'Escape left the rename dialog open');
+          }
+          const still = await session.cdp.evaluate<string>(`document.querySelector('.bar-deck-name')?.title.split('\\n')[0] ?? ''`);
+          if (still !== dir) flag('routing', `cancelling the rename moved the deck from ${dir} to ${still}`);
+        } else {
+          await session.cdp.evaluate(`(document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })), true)`);
+          await wait(80);
+          if (await session.cdp.evaluate<boolean>(`Boolean(document.getElementById('ctx-menu'))`)) {
+            flag('routing', 'the deck folder menu stayed open after a press elsewhere');
+          }
         }
       }
       const after = await session.allTexts();

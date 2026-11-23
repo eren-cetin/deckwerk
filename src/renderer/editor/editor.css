@@ -4923,3 +4923,5 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: transparent;
   transform: translateX(-50%);
   pointer-events: none;
 }
+
+.workflow-dialog .field-problem { margin: 0; color: var(--danger); line-height: 1.5; }

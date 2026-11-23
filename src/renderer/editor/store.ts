@@ -555,6 +555,15 @@ export class EditorStore {
     return true;
   }
 
+  /**
+   * Follow the open deck to its folder's new path after a rename. The
+   * document is the same one, so undo, selection and the current slide stay.
+   */
+  moveTo(dir: string): void {
+    this.state = { ...this.state, dir };
+    this.emit();
+  }
+
   markClean(): void {
     this.state = { ...this.state, dirty: false };
     this.emit();

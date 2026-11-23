@@ -83,6 +83,9 @@ const api = {
     ipcRenderer.invoke(IPC.deckSyncSnapshot, snapshot),
   saveDeckAs: (operationId?: string): Promise<DeckSession | null> =>
     ipcRenderer.invoke(IPC.deckSaveAs, operationId),
+  /** Rename the open deck's folder in place; resolves the deck at its new path. */
+  renameDeck: (name: string, operationId?: string): Promise<DeckSession> =>
+    ipcRenderer.invoke(IPC.deckRename, name, operationId),
   loadDeckHistory: (dir: string): Promise<DeckHistorySession> =>
     ipcRenderer.invoke(IPC.deckHistoryLoad, dir),
   saveDeckHistory: (dir: string, history: DeckHistoryDocument): Promise<void> =>

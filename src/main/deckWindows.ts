@@ -66,6 +66,18 @@ export function deckKeyFor(dir: string): string {
   return key;
 }
 
+/**
+ * Carry a deck folder's asset host over to the folder's new path after a
+ * rename, so every picture already on screen keeps loading from the same URL.
+ */
+export function moveDeckKey(from: string, to: string): void {
+  const key = keysByDir.get(resolve(from));
+  if (!key) return;
+  keysByDir.delete(resolve(from));
+  keysByDir.set(resolve(to), key);
+  dirsByKey.set(key, resolve(to));
+}
+
 /** The deck folder an asset URL's host refers to, if any. */
 export function deckDirForKey(key: string): string | null {
   return dirsByKey.get(key) ?? null;

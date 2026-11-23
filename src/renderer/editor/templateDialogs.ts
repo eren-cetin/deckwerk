@@ -8,16 +8,18 @@ import { masterTile } from './layoutPreview.js';
  * The template dialogs: pick a saved template (to start a deck from or to
  * apply), and name one being saved. Built on the shared workflow dialog, so
  * they look, focus and dismiss like every other dialog in the editor.
+ * `openDialog` and `button` are shared with the other small dialogs
+ * (renameDialog.ts).
  */
 
-interface DialogParts {
+export interface DialogParts {
   overlay: HTMLElement;
   dialog: HTMLElement;
   actions: HTMLElement;
   finishWith: (done: () => void) => void;
 }
 
-function openDialog(className: string, heading: string, onCancel: () => void): DialogParts {
+export function openDialog(className: string, heading: string, onCancel: () => void): DialogParts {
   const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const overlay = document.createElement('div');
   overlay.className = 'workflow-overlay';
@@ -54,7 +56,7 @@ function openDialog(className: string, heading: string, onCancel: () => void): D
   return { overlay, dialog, actions, finishWith };
 }
 
-function button(label: string, primary = false): HTMLButtonElement {
+export function button(label: string, primary = false): HTMLButtonElement {
   const element = document.createElement('button');
   element.type = 'button';
   element.textContent = label;
