@@ -109,9 +109,24 @@ const LINES = [
   { name: 'numbered list', html: '<ol><li>alpha</li></ol>', blockTag: 'li' },
 ] as const;
 
+/**
+ * A real Shift+Return. The key must carry its "\r": a chord without text
+ * reaches the page as a bare keydown that breaks nothing, which left every
+ * Shift+Return case here checking formats on a line that was never broken.
+ */
+async function shiftReturn(): Promise<void> {
+  for (const type of ['keyDown', 'keyUp']) {
+    await session.cdp.call('Input.dispatchKeyEvent', {
+      type, key: 'Enter', code: 'Enter', modifiers: SHIFT,
+      text: type === 'keyDown' ? '\r' : undefined,
+      windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+    });
+  }
+}
+
 const BREAKS = [
   { name: 'Return', press: () => session.cdp.key('Enter', 13), newBlock: true },
-  { name: 'Shift+Return', press: () => session.cdp.chord('Enter', 'Enter', 13, SHIFT), newBlock: false },
+  { name: 'Shift+Return', press: shiftReturn, newBlock: false },
 ] as const;
 
 function picture(runs: TextRun[]): string {

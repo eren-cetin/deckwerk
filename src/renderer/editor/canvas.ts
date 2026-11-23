@@ -4279,6 +4279,7 @@ export class EditorCanvas {
         // Chromium's split clones whatever inline wrapper the caret ends up
         // in, so this is read now and re-established once the split is done.
         if (event.inputType === 'insertParagraph') breakFormats = this.typingFormatsAtCaret();
+        const lineBreakFormats = event.inputType === 'insertLineBreak' ? this.typingFormatsAtCaret() : null;
         // A pending collapsed-caret style marker is an inline span containing
         // an invisible sentinel. Letting Chromium split a paragraph while the
         // caret is still inside that editor-only run can either swallow Enter
@@ -4290,9 +4291,11 @@ export class EditorCanvas {
         // "\n" text node, which nothing else in the editor writes or reads
         // (the nightly paste fuzz caught it: Enter in a pasted table cell,
         // then typing). Cells break lines with <br>, as pasted multi-line
-        // cells do; own the break so Enter in a cell produces one.
-        if (this.breakLineInTableCell(body)) {
+        // cells do; own the break so Enter in a cell produces one. Shift+Return
+        // is the same fallback everywhere, so it is owned in every block.
+        if (this.insertLineBreak(body, event.inputType === 'insertLineBreak' ? TEXT_BLOCKS : 'td, th')) {
           event.preventDefault();
+          if (lineBreakFormats) this.continueTypingFormatsAfterBreak(body, lineBreakFormats);
           onInput(event);
           return;
         }
@@ -4772,18 +4775,24 @@ export class EditorCanvas {
   }
 
   /**
-   * Enter with the caret directly inside a table cell: insert the line break
-   * the cell model uses. Returns false when the caret is anywhere else,
-   * including inside a paragraph within a cell, which splits natively.
+   * Break the line at the caret with a `<br>`, when the caret's block matches
+   * `blocks`. Returns false otherwise, and Chromium handles the key itself.
+   *
+   * Enter uses this only directly inside a table cell, which cannot split the
+   * way a paragraph does (a paragraph inside a cell splits natively).
+   * Shift+Return uses it in every block: in this pre-wrap box Chromium's own
+   * soft break is a "\n" text node, and one at the end of a line was taken
+   * for source formatting when the edit was saved and stripped, so the empty
+   * line the author made vanished (paragraphs.ts, stripStructuralWhitespace).
    */
-  private breakLineInTableCell(body: HTMLElement): boolean {
+  private insertLineBreak(body: HTMLElement, blocks: string): boolean {
     const range = this.activeTextRange(body);
     if (!range) return false;
     const container = range.startContainer instanceof Element
       ? range.startContainer
       : range.startContainer.parentElement;
     const block = container?.closest(TEXT_BLOCKS) ?? null;
-    if (!block || !block.matches('td, th') || !body.contains(block)) return false;
+    if (!block || !block.matches(blocks) || !body.contains(block)) return false;
     if (!range.collapsed) range.deleteContents();
     const br = document.createElement('br');
     range.insertNode(br);
@@ -5107,8 +5116,22 @@ export class EditorCanvas {
     selection?.addRange(caret);
     this.textSelectionRange = caret.cloneRange();
 
+    const declarations = this.typingFormatDifference(block, body, formats);
+    if (declarations.length > 0) this.applyCollapsedTypingStyle(body, caret, declarations);
+  }
+
+  /**
+   * The declarations a pending typing run needs so that text typed inside
+   * `element` comes out with `formats`: each keyboard format that differs
+   * from what `element` already shows, and every carried run style.
+   */
+  private typingFormatDifference(
+    element: Element,
+    body: HTMLElement,
+    formats: TypingFormats,
+  ): Array<readonly [TextRunStyleProperty, string]> {
     const declarations: Array<readonly [TextRunStyleProperty, string]> = [];
-    const has = (format: InlineTextFormat) => this.elementFormatState(block, body, format);
+    const has = (format: InlineTextFormat) => this.elementFormatState(element, body, format);
     if (formats.bold !== has('bold')) declarations.push(['fontWeight', formats.bold ? '700' : '400']);
     if (formats.italic !== has('italic')) {
       declarations.push(['fontStyle', formats.italic ? 'italic' : 'normal']);
@@ -5123,7 +5146,24 @@ export class EditorCanvas {
     for (const [property, value] of Object.entries(formats.runStyles) as Array<[CarriedRunStyle, string]>) {
       declarations.push([property, value]);
     }
-    if (declarations.length > 0) this.applyCollapsedTypingStyle(body, caret, declarations);
+    return declarations;
+  }
+
+  /**
+   * After a Shift+Return, carry on typing with the formats that were in force
+   * when it was pressed. Sealing a pending run before the break leaves the
+   * caret outside that run, so what was switched on at a collapsed caret
+   * (Cmd+B, a size, a colour) would otherwise be gone on the new line.
+   */
+  private continueTypingFormatsAfterBreak(body: HTMLElement, formats: TypingFormats): void {
+    const range = this.activeTextRange(body);
+    if (!range?.collapsed) return;
+    const container = range.startContainer instanceof Element
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    if (!container || !body.contains(container)) return;
+    const declarations = this.typingFormatDifference(container, body, formats);
+    if (declarations.length > 0) this.applyCollapsedTypingStyle(body, range, declarations);
   }
 
   /**
