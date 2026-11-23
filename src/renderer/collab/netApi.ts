@@ -1,4 +1,8 @@
-import type { AssetImportProgress, ImportedAsset, MediaInfo } from '@shared/ipc.js';
+import type { Deck } from '@shared/deck.js';
+import type { DeckTemplate } from '@shared/deckTemplates.js';
+import type {
+  AssetImportProgress, ImportedAsset, MediaInfo, TemplateSaveResult, TemplateSummary,
+} from '@shared/ipc.js';
 import { clipboardImageName, type ClipboardImageSource } from '@shared/clipboardImages.js';
 
 /**
@@ -127,4 +131,42 @@ export function installNetApi(options: NetApiOptions): void {
   };
 
   (window as unknown as { api: typeof api }).api = api;
+}
+
+async function templateRequest<T>(path: string, method = 'GET'): Promise<T> {
+  const response = await fetch(path, { method });
+  const body = await response.json().catch(() => null) as (T & { error?: string }) | null;
+  if (!response.ok || body === null) throw new Error(body?.error ?? `template request failed (${response.status})`);
+  return body;
+}
+
+/**
+ * The template library, over the collab server's /api/templates routes, in
+ * the shape the desktop preload gives it — so the shared template dialogs and
+ * flows (templateDialogs.ts, templateActions.ts) run unchanged. Installed once
+ * the server's config says it keeps templates, which a hosted session does
+ * not. Without a deck (the picker page) only listing is offered, and
+ * `deleteTemplate` exists only for someone allowed to change the library:
+ * the shared code feature-tests it to decide whether to offer Delete.
+ */
+export function installTemplateApi(options: { deckId: string | null; canManage: boolean }): void {
+  const target = ((window as unknown as { api?: Record<string, unknown> }).api ??= {});
+  target.listTemplates = (): Promise<TemplateSummary[]> => templateRequest('/api/templates');
+  if (options.deckId !== null) {
+    const deck = encodeURIComponent(options.deckId);
+    // The server saves from its live room, which holds everyone's edits, so
+    // the deck and stylesheet this side would send are not needed.
+    target.saveTemplate = (name: string, _deck: Deck, _css: string, replace = false): Promise<TemplateSaveResult> =>
+      templateRequest(
+        `/api/templates?deck=${deck}&name=${encodeURIComponent(name)}${replace ? '&replace=1' : ''}`,
+        'POST',
+      );
+    target.takeTemplate = (id: string): Promise<DeckTemplate> =>
+      templateRequest(`/api/templates/take?deck=${deck}&id=${encodeURIComponent(id)}`, 'POST');
+  }
+  if (options.canManage) {
+    target.deleteTemplate = async (id: string): Promise<void> => {
+      await templateRequest(`/api/templates?id=${encodeURIComponent(id)}`, 'DELETE');
+    };
+  }
 }

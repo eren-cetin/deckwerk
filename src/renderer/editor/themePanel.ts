@@ -111,18 +111,22 @@ export interface ThemePanelDeps {
   onPreviewSlide?: (slide: Slide | null, label: string) => void;
   /** Lay a theme draft's stylesheet over the editor; `null` removes it. */
   onPreviewThemeDraft?: (theme: ThemePreset | null) => void;
-  /** The saved templates, listed in the panel; absent where templates are not kept. */
+  /**
+   * The saved templates, listed in the panel; absent where templates are not
+   * kept. A shell that learns this later calls `enableTemplates` instead.
+   */
   templates?: TemplateActions;
 }
 
-/** What the Design tab's template list can do (the desktop shell provides it). */
+/** What the Design tab's template list can do (templateActions.ts provides it). */
 export interface TemplateActions {
   list(): Promise<TemplateSummary[]>;
   /** Save this deck's design, asking for a name; true once saved. */
   save(): Promise<boolean>;
   /** Dress this deck in the template. */
   apply(id: string): Promise<void>;
-  remove(id: string): Promise<void>;
+  /** Absent where this person may not delete templates; the list then offers no Delete. */
+  remove?(id: string): Promise<void>;
 }
 
 export interface ThemePanel {
@@ -138,6 +142,12 @@ export interface ThemePanel {
   dismiss(): boolean;
   /** List the saved templates again, after one was saved or deleted elsewhere. */
   refreshTemplates(): void;
+  /**
+   * Add the template list once the shell knows templates are kept — the
+   * browser learns it from the server after the panel exists. Only the first
+   * call adds it.
+   */
+  enableTemplates(actions: TemplateActions): void;
 }
 
 export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
@@ -833,7 +843,7 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
       if (selected) void actions.apply(selected);
     }, 'primary');
     const remove = barButton('Delete', () => {
-      if (!selected) return;
+      if (!selected || !actions.remove) return;
       // A second click confirms, so one stray click never loses a template.
       if (!remove.dataset.confirming) {
         remove.dataset.confirming = 'true';
@@ -842,12 +852,16 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
       }
       const id = selected;
       selected = null;
-      void actions.remove(id).then(() => renderTemplateList?.());
+      void actions.remove(id).then(
+        () => renderTemplateList?.(),
+        (err) => setStatusMessage(`Could not delete the template: ${err instanceof Error ? err.message : err}`),
+      );
     });
     remove.classList.add('template-delete');
     const actionRow = document.createElement('div');
     actionRow.className = 'theme-default-row template-actions';
-    actionRow.append(apply, remove);
+    actionRow.append(apply);
+    if (actions.remove) actionRow.append(remove);
     const save = barButton('Save this design as a template…', () => {
       void actions.save().then((saved) => {
         if (saved) renderTemplateList?.();
@@ -1107,6 +1121,10 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
     syncScope,
     applyButtonLabel,
     refreshTemplates: () => renderTemplateList?.(),
+    enableTemplates: (actions) => {
+      if (renderTemplateList) return;
+      element.append(buildTemplateSection(actions));
+    },
     dismiss: () => {
       const wasOpen = themePreviewOpen
         || Boolean(chooser && !chooser.hidden)

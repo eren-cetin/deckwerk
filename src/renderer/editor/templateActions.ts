@@ -103,7 +103,11 @@ export function createTemplateFlows(deps: TemplateFlowDeps): TemplateFlows {
       list: () => window.api.listTemplates(),
       save: () => saveAsTemplate(),
       apply: (id) => applyTemplate(id),
-      remove: (id) => window.api.deleteTemplate(id),
+      // Feature-tested like the picker's Delete: the browser leaves it out
+      // for people who may not change the server's shared library.
+      ...(typeof window.api.deleteTemplate === 'function'
+        ? { remove: (id: string) => window.api.deleteTemplate(id) }
+        : {}),
     }),
   };
 }

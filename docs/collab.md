@@ -366,6 +366,14 @@ the participant id.
   surface ends the show on both. Speaker View needs pop-ups allowed for the
   site; if the second window is refused, Present falls back to presenting in
   this tab and says why.
+- **Templates** — the Design tab lists the server's template library (see
+  **Templates** above): pick one and **Apply to this deck**, or save this
+  deck's design under a name. Applying is a single transaction, so everyone
+  sees it at once and Undo takes the slides back; the stylesheet rules it
+  added stay, as on the desktop. **Save As… → Template…** saves too, and
+  **New from Template…** (the compact File menu, and the deck picker's
+  **New from template…**) creates a deck that starts out wearing one. Delete
+  appears only for someone allowed to change the library.
 - **Sidebar tabs** — Props, Theme (the full preset gallery + adoption
   controls, shared code with the desktop app), Build, History. Restoring a
   history snapshot broadcasts as an ordinary transaction.

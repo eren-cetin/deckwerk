@@ -1,4 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { emptyDeck, parseDeck } from '../src/shared/deck.js';
+import { saveTemplate } from '../src/main/templateStore.js';
 import { electronBinary, wait } from './support/browserSession.js';
 import {
   FAR,
@@ -46,9 +51,16 @@ const TRACE = process.env.CROSS_FUZZ_TRACE === '1';
 
 let session: CrossSession;
 let close: (() => Promise<void>) | null = null;
+/** The server runs in this process; its template library is a scratch one. */
+let templatesDir = '';
+let previousTemplatesDir: string | undefined;
 
 beforeAll(async () => {
   if (!electronBinary) return;
+  templatesDir = await mkdtemp(join(tmpdir(), 'cross-fuzz-templates-'));
+  previousTemplatesDir = process.env.DECKWERK_TEMPLATES_DIR;
+  process.env.DECKWERK_TEMPLATES_DIR = templatesDir;
+  await saveTemplate(templatesDir, parseDeck(emptyDeck('Fuzz design')), '', 'Fuzz design');
   const started = await startCrossSession(DECK_ID, 'Cross Context Fuzz');
   session = started.session;
   close = started.close;
@@ -57,6 +69,10 @@ beforeAll(async () => {
 afterAll(async () => {
   await close?.();
   close = null;
+  if (!templatesDir) return;
+  if (previousTemplatesDir === undefined) delete process.env.DECKWERK_TEMPLATES_DIR;
+  else process.env.DECKWERK_TEMPLATES_DIR = previousTemplatesDir;
+  await rm(templatesDir, { recursive: true, force: true });
 });
 
 /** A small, reproducible pseudo-random source. */
@@ -140,7 +156,7 @@ type OpName =
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
   | 'cmd+a' | 'group toggle' | 'panel toggle' | 'view menu' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case' | 'image caption'
-  | 'copy as image';
+  | 'copy as image' | 'template list';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -390,6 +406,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.editing === null && targets.length > 0) add('shift drag', 2);
   if (pre.editing === null) add('page numbers', 1);
   if (pre.editing === null) add('theme apply', 1);
+  if (pre.editing === null) add('template list', 1);
   add('grid toggle', 1);
   add('panel toggle', 1);
   add('view menu', 1);
@@ -940,6 +957,34 @@ async function performOp(
           flag('routing', `toggling the ${panel} changed ${id}: "${texts[id]}" -> "${text}"`);
         }
       }
+      return 'same';
+    }
+    case 'template list': {
+      // The Design tab's template list: picking a template only selects it,
+      // so the deck stays exactly as it was until someone presses Apply.
+      const deckBefore = await session.cdp.evaluate<string>('JSON.stringify(window.store.get().deck)');
+      await session.cdp.click('#side-tabs button[data-panel="themePanel"]', 'Design tab');
+      await wait(150);
+      const row = '.design-template-list .template-row[data-template-id="fuzz-design"]';
+      if (!(await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('${row}'))`))) {
+        flag('routing', 'the Design tab did not list the saved template');
+      } else {
+        await session.cdp.evaluate(`(document.querySelector('${row}').scrollIntoView({ block: 'center' }), true)`);
+        await session.cdp.click(row, 'template row');
+        await wait(80);
+        const picked = await session.cdp.evaluate<{ selected: boolean; applyEnabled: boolean }>(`(() => ({
+          selected: document.querySelector('${row}').getAttribute('aria-selected') === 'true',
+          applyEnabled: [...document.querySelectorAll('.template-section button')]
+            .some((button) => button.textContent === 'Apply to this deck' && !button.disabled),
+        }))()`);
+        if (!picked.selected || !picked.applyEnabled) {
+          flag('routing', `picking a template left it ${JSON.stringify(picked)}`);
+        }
+      }
+      await session.cdp.click('#side-tabs button[data-panel="inspector"]', 'Props tab');
+      await wait(150);
+      const deckAfter = await session.cdp.evaluate<string>('JSON.stringify(window.store.get().deck)');
+      if (deckAfter !== deckBefore) flag('routing', 'browsing the template list changed the deck');
       return 'same';
     }
     case 'theme apply': {

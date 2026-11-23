@@ -14,6 +14,7 @@
  * folder with nothing shared inside it is simply not in the listing.
  */
 import { createToolbarPicker, type ToolbarPickerOption } from '../editor/exportPicker.js';
+import { showTemplatePicker } from '../editor/templateDialogs.js';
 import { buildZip, type ZipInput } from '../../shared/zip.js';
 
 
@@ -63,11 +64,13 @@ export function folderOf(deckId: string): string {
 const folderQuery = (folder: string): string =>
   (folder ? `&folder=${encodeURIComponent(folder)}` : '');
 
-export async function createDeckOnServer(folder = ''): Promise<void> {
+/** Create a deck in `folder` and open it; `templateId` starts it wearing that template. */
+export async function createDeckOnServer(folder = '', templateId?: string): Promise<void> {
   const name = (window.prompt('Name for the new presentation?') ?? '').trim();
   if (!name) return;
+  const template = templateId ? `&template=${encodeURIComponent(templateId)}` : '';
   const response = await fetch(
-    `/api/decks?name=${encodeURIComponent(name)}${folderQuery(folder)}`,
+    `/api/decks?name=${encodeURIComponent(name)}${folderQuery(folder)}${template}`,
     { method: 'POST' },
   );
   const body = await response.json() as { id?: string; error?: string };
@@ -369,6 +372,19 @@ function groupOf(deck: DeckEntry, access: PickerAccess): string {
   return 'Other private presentations (admin)';
 }
 
+/** File › New from Template: pick a saved design, then name the deck that starts from it. */
+export async function newDeckFromTemplate(folder: string, onStatus: (text: string) => void): Promise<void> {
+  const id = await showTemplatePicker({
+    heading: 'New from template',
+    actionLabel: 'Create deck…',
+    detail: 'The new deck starts with the template’s theme, layouts, page numbers and stylesheet, '
+      + 'and one slide on its title layout.',
+  });
+  if (!id) return;
+  await createDeckOnServer(folder, id).catch((error) =>
+    onStatus(`Create failed: ${error instanceof Error ? error.message : error}`));
+}
+
 const GROUP_ORDER = ['Your presentations', 'Shared with you', 'Public', 'Other private presentations (admin)'];
 
 /** Modal list of the server's decks, with New and Import at the bottom. */
@@ -378,6 +394,8 @@ export function showDeckPicker(opts: {
   access?: PickerAccess | null;
   /** Folder to open the picker in; defaults to the current deck's. */
   folder?: string;
+  /** Whether the server keeps templates, so a deck can start from one. */
+  templates?: boolean;
 }): void {
   const overlay = document.createElement('div');
   overlay.className = 'workflow-overlay';
@@ -579,6 +597,9 @@ export function showDeckPicker(opts: {
       void createDeckOnServer(folder).catch((error) =>
         opts.onStatus(`Create failed: ${error instanceof Error ? error.message : error}`));
     }),
+    ...(opts.templates
+      ? [makeButton('New from template…', () => void newDeckFromTemplate(folder, opts.onStatus))]
+      : []),
     makeButton('New folder…', () => {
       const name = (window.prompt('Name for the new folder?') ?? '').trim();
       if (!name) return;

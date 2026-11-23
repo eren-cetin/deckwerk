@@ -71,6 +71,18 @@ are intentionally omitted.
   download a ZIP. Add a File System Access implementation where supported and
   keep ZIP upload/download as the portable fallback.
 
+## Design
+
+- [x] **P1 — Deck templates.** The browser offers the desktop's template
+  library — the same folder, through the same `templateStore.ts`, served by
+  the collab server's `/api/templates` routes. The Design tab lists it and
+  applies or saves designs, Save As… gains Template…, and the File menu and
+  the deck picker start a new deck from one. Save and apply are the desktop's
+  own flows (`src/renderer/editor/templateActions.ts`) with the stylesheet
+  sent to the room instead of to disk, so applying is one transaction every
+  peer sees and the applier can undo. Hosted sessions offer no templates, and
+  with `--access` only the admin replaces or deletes one.
+
 ## Already at parity
 
 Both clients already share slide and element editing, text/shape/table
@@ -91,3 +103,6 @@ parity backlog.
 | Web export route, probe, and archive contents | `test/collabServer.test.ts` |
 | Range arithmetic shared with the desktop | `test/presentationRange.test.ts` |
 | Presenting-pair latency and leak budgets | `test/performanceStressBrowser.test.ts` (opt-in) |
+| Template routes, live-session save, hosted and `--access` rules | `test/collabTemplates.test.ts` |
+| Templates in the browser: apply seen by a peer, undo, save, new deck | `test/collabTemplatesBrowser.test.ts` |
+| Browsing the template list leaves the deck alone (fuzz op) | `test/crossContextFuzzBrowser.test.ts` |

@@ -42,8 +42,16 @@ import { createThemePanel } from '../editor/themePanel.js';
 import { TimelinePanel } from '../editor/timelinePanel.js';
 import { CollabBridge } from './collabBridge.js';
 import { createConnectionNotice } from './connectionNotice.js';
-import { createDeckOnServer, folderOf, importKeynoteToServer, importPowerPointToServer, showDeckPicker, showShareDialog } from './deckPicker.js';
-import { installNetApi } from './netApi.js';
+import {
+  createDeckOnServer,
+  folderOf,
+  importKeynoteToServer,
+  importPowerPointToServer,
+  newDeckFromTemplate,
+  showDeckPicker,
+  showShareDialog,
+} from './deckPicker.js';
+import { installNetApi, installTemplateApi } from './netApi.js';
 import { PresenceOverlay } from './presenceOverlay.js';
 import { createAgentPanelApi, type AgentPanelBrowserApi } from './agentPanelApi.js';
 import { openEndCollaborationPopover } from './endCollaborationPopover.js';
@@ -55,7 +63,8 @@ import { setRenderInvariantChecks } from '../editor/renderInvariants.js';
 import { setSelectionInvariantChecks } from '../editor/selectionInvariants.js';
 import { trackPreviewFrameRecovery } from '../player/previewFrameRecovery.js';
 import { trackVideoLoading } from '../player/videoLoadingProgress.js';
-import { DelayedOperationProgress } from '../editor/operationProgress.js';
+import { DelayedOperationProgress, type OperationHandle } from '../editor/operationProgress.js';
+import { createTemplateFlows } from '../editor/templateActions.js';
 import { DesignWorkspace } from '../editor/designWorkspace.js';
 import { installResponsiveToolbar } from '../editor/responsiveToolbar.js';
 import { deckPathParts } from '../editor/deckPath.js';
@@ -142,6 +151,8 @@ interface ServerConfig {
   };
   /** Present when the server runs with --access: who the server says we are. */
   access?: null | { user: string; name: string; admin: boolean };
+  /** The server's template library; null in a hosted session or on an older server. */
+  templates?: null | { canManage: boolean };
 }
 
 let serverConfig: ServerConfig = { hosted: false, deckId: null, urls: [], agentPanel: null, access: null };
@@ -179,10 +190,10 @@ const operationProgress = new DelayedOperationProgress(({ message, busy }) => {
   renderStatus();
 });
 
-async function runOperation<T>(message: string, action: () => Promise<T>): Promise<T> {
+async function runOperation<T>(message: string, action: (operation: OperationHandle) => Promise<T>): Promise<T> {
   const operation = operationProgress.begin(message);
   try {
-    return await action();
+    return await action(operation);
   } finally {
     operation.finish();
   }
@@ -199,12 +210,14 @@ if (!deckId) {
       return;
     }
     el('status').textContent = 'Choose a presentation to start.';
+    if (config.templates) installTemplateApi({ deckId: null, canManage: config.templates.canManage });
     // Module init stops right below this block (`throw`), so the editor store
     // never exists here: status goes straight to the DOM, not renderStatus().
     showDeckPicker({
       dismissable: false,
       onStatus: (text) => { el('status').textContent = text; },
       access: config.access ?? null,
+      templates: Boolean(config.templates),
     });
   });
   throw new Error('no deck selected — showing picker');
@@ -270,6 +283,16 @@ const designWorkspace = new DesignWorkspace({
   store,
   save: async () => {},
   setStatusMessage,
+});
+// The template list joins the Design tab once /api/config says the server
+// keeps templates (see the config handler below); the panel exists first.
+const templateFlows = createTemplateFlows({
+  store,
+  cssEditor,
+  setStatusMessage,
+  runOperation,
+  persistThemeCss: (css) => bridge.sendTheme(css),
+  refreshTemplates: () => themePanel.refreshTemplates(),
 });
 const themePanel = createThemePanel({
   store,
@@ -661,6 +684,7 @@ function openDeckPathMenu(anchor: HTMLElement): void {
       dismissable: true,
       onStatus: setStatusMessage,
       access: serverConfig.access ?? null,
+      templates: Boolean(serverConfig.templates),
       folder: folderOf(deckId ?? ''),
     }));
   }
@@ -712,6 +736,7 @@ function buildToolbar(): void {
       dismissable: true,
       onStatus: setStatusMessage,
       access: serverConfig.access ?? null,
+      templates: Boolean(serverConfig.templates),
     });
     const importEntries = [
       { label: 'Keynote…', action: () => importKeynoteToServer(setStatusMessage, here) },
@@ -729,6 +754,9 @@ function buildToolbar(): void {
         label: 'Presentation',
         options: [
           { label: 'New', action: createDeck },
+          ...(serverConfig.templates
+            ? [{ label: 'New from Template…', action: () => void newDeckFromTemplate(here, setStatusMessage) }]
+            : []),
           // A browser cannot place a window, so this is a tab on the picker.
           { label: 'New Window', action: () => void window.open(location.pathname, '_blank') },
           { label: 'Open…', action: openDeck },
@@ -747,11 +775,13 @@ function buildToolbar(): void {
     link.download = `${deckId}.zip`;
     link.click();
   };
+  const saveAsTemplate = (): void => void templateFlows.saveAsTemplate();
   const saveEntries: ToolbarPickerEntry[] = [
     {
       label: 'Deck archive (.zip)…',
       action: downloadDeck,
     },
+    ...(serverConfig.templates ? [{ label: 'Template…', action: saveAsTemplate }] : []),
     {
       label: 'Lossy export',
       options: [
@@ -768,6 +798,7 @@ function buildToolbar(): void {
         label: 'Deck archive (.zip)…',
         action: downloadDeck,
       },
+      ...(serverConfig.templates ? [{ label: 'Save as Template…', action: saveAsTemplate }] : []),
       { label: 'Export PDF…', action: () => void exportPdf() },
       { label: 'Export Web…', action: () => void exportWeb() },
     ],
@@ -925,7 +956,12 @@ function showPanel(id: string): void {
     b.classList.toggle('active', b.dataset.panel === id);
   }
   if (id === 'inspector') inspector.render();
-  if (id === 'themePanel') el('themePanel').scrollTop = 0;
+  if (id === 'themePanel') {
+    el('themePanel').scrollTop = 0;
+    // The library is shared by everyone on the server, so what others saved
+    // or deleted since the list was drawn shows up when the tab opens.
+    themePanel.refreshTemplates();
+  }
   if (id !== 'themePanel') designWorkspace.hide();
   rail.setDesignLabels(id === 'themePanel');
   canvas.setBuildBadgesVisible(id === 'timeline');
@@ -973,6 +1009,10 @@ function renderStatus(): void {
 // before first paint of the buttons keeps New/Open/Import from flashing in.
 void fetchServerConfig().then((config) => {
   serverConfig = config;
+  if (config.templates) {
+    installTemplateApi({ deckId, canManage: config.templates.canManage });
+    themePanel.enableTemplates(templateFlows.panelActions());
+  }
   if (config.agentPanel?.enabled && !agentPanel) {
     agentPanelBrowserApi = createAgentPanelApi(deckId!);
     const local = config.agentPanel.mode === 'local';

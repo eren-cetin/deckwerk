@@ -144,7 +144,10 @@ export function showTemplatePicker(options: {
     const cancel = button('Cancel');
     const choose = button(options.actionLabel, true);
     remove.classList.add('template-delete');
-    actions.append(remove, cancel, choose);
+    // The browser editor leaves deleting out for people who may not change
+    // the server's shared library.
+    const canDelete = typeof window.api.deleteTemplate === 'function';
+    actions.append(...(canDelete ? [remove] : []), cancel, choose);
     dialog.append(list, actions);
     document.body.appendChild(overlay);
 
@@ -197,6 +200,8 @@ export function showTemplatePicker(options: {
         templates = templates.filter((template) => template.id !== id);
         selected = templates[0]?.id ?? null;
         render();
+      }, (err: unknown) => {
+        remove.textContent = `Could not delete: ${err instanceof Error ? err.message : err}`;
       });
     });
     cancel.addEventListener('click', () => done(null));
