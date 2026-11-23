@@ -4,6 +4,8 @@ import type {
   AssetImportProgress, ImportedAsset, MediaInfo, TemplateSaveResult, TemplateSummary,
 } from '@shared/ipc.js';
 import { clipboardImageName, type ClipboardImageSource } from '@shared/clipboardImages.js';
+import type { CopyImageRequest, CopyImageResult } from '@shared/copyImage.js';
+import { canWriteClipboardImage, writeClipboardImage } from './copyImageClipboard.js';
 
 /**
  * The browser collab client's stand-in for the Electron preload bridge.
@@ -129,6 +131,13 @@ export function installNetApi(options: NetApiOptions): void {
 
     // Persistence belongs to the server; edits reach it as transactions.
     saveDeck: async (): Promise<void> => {},
+
+    // Copy as Image. Left absent where the clipboard cannot take a picture
+    // (plain http off localhost), which hides the command altogether.
+    writeClipboardImage: canWriteClipboardImage()
+      ? (request: CopyImageRequest): Promise<CopyImageResult> =>
+        writeClipboardImage(request, { assetUrl: api.assetUrl, loadTheme: api.loadTheme })
+      : undefined,
   };
 
   (window as unknown as { api: typeof api }).api = api;

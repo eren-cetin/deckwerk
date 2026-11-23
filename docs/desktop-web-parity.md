@@ -62,6 +62,13 @@ are intentionally omitted.
   unpacks into a deck-named folder. The archive is streamed rather than
   buffered, so the one thing that can fail — a server without the built export
   player — is settled by a probe request before any bytes move.
+- [x] **P1 — Copy as Image.** ⇧⌘C and the context menu's **Copy as Image**
+  put a transparent 3× PNG of the selection on the clipboard, as on the
+  desktop. The browser lays the selection out with the desktop's image page
+  (`print/imagePage.ts`) in a hidden frame and draws it through an SVG
+  `foreignObject` (`collab/rasterize.ts`) instead of capturing a window.
+  Needs https or localhost; PDF images and embedded web pages are left out
+  and counted.
 - [ ] **P2 — Direct PDF download.** Browser PDF export currently opens a print
   document and relies on the browser's print dialog. Add a one-click generated
   PDF download where the deployment has a rendering service; retain print as
@@ -111,6 +118,8 @@ parity backlog.
 | Two real windows: drive, blank, clamp, swap roles | `test/collabPresentationBrowser.test.ts` |
 | Web export route, probe, and archive contents | `test/collabServer.test.ts` |
 | Range arithmetic shared with the desktop | `test/presentationRange.test.ts` |
+| Copy as Image: ⇧⌘C, context menu, transparency, video, text, PDF left out | `test/collabCopyImageBrowser.test.ts` |
+| Copy as Image inlining, shadow flattening, font pruning | `test/collabRasterize.test.ts` |
 | Presenting-pair latency and leak budgets | `test/performanceStressBrowser.test.ts` (opt-in) |
 | Template routes, live-session save, hosted and `--access` rules | `test/collabTemplates.test.ts` |
 | Templates in the browser: apply seen by a peer, undo, save, new deck | `test/collabTemplatesBrowser.test.ts` |

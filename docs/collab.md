@@ -352,6 +352,15 @@ the participant id.
   is opened and cached outside the deck folder. `npm run prepare:media --
   <deck-or-decks-root>` does a whole deck up front instead of letting the
   first presentation pay for it.
+- **Copy as Image** — ⇧⌘C (Ctrl+Shift+C), or **Copy as Image** in the
+  canvas context menu, puts a PNG of the selected objects on a transparent
+  background on the clipboard, at three pixels per slide pixel, the same
+  picture the desktop app makes. The browser has no window capture, so the
+  selection is laid out by the desktop's own image page in a hidden frame and
+  drawn through an SVG `foreignObject` (fonts, theme assets and pictures
+  inlined, videos as their current frame). The command only appears where the
+  async Clipboard API can take an image: over https, or on `localhost` /
+  `127.0.0.1`. See **Known limits**.
 - **Save As… → Deck archive (.zip)…** — everyone, at any point, can save
   the whole deck folder (`deck.json`, `theme.css`, `assets/`). The server
   flushes the live session first, so the archive is exactly what everyone
@@ -498,3 +507,14 @@ would take, is in [Desktop → web feature parity](desktop-web-parity.md).
 - Two people typing in the same text box at once: the last one to finish
   (blur) wins. The presence badge shows who is editing what.
 - Presence and edits are unauthenticated by design — trusted networks only.
+- **Copy as Image** needs a secure context. Over plain `http://` to another
+  machine's address the browser withholds the image clipboard and the command
+  is left out of the context menu and keyboard map; serve over https (e.g.
+  `tailscale serve`) or reach the server through an SSH tunnel to `localhost`.
+  A PDF placed as an image and an embedded web page cannot be drawn into the
+  picture: they are left out, and the status line says how many were. Safari
+  may refuse to export a canvas holding a `foreignObject`; the copy then fails
+  with a message rather than writing a blank picture. ⇧⌘C's `preventDefault`
+  should keep Chromium's own Ctrl+Shift+C (DevTools' inspect-element) from
+  firing as well, since the page sees the key first; that has not been checked
+  in desktop Chrome or Edge, whose test browser has no DevTools shortcuts.

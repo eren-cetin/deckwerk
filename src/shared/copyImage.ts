@@ -44,6 +44,11 @@ export interface CopyImageJob extends CopyImageRequest {
 export interface CopyImageResult {
   width: number;
   height: number;
+  /**
+   * Objects left out because they could not be drawn: the browser client
+   * cannot picture a PDF placed as an image or an embedded web page.
+   */
+  skipped?: number;
 }
 
 /**

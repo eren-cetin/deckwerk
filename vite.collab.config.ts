@@ -25,6 +25,7 @@ export default defineConfig({
         index: resolve(__dirname, 'src/renderer/collab/index.html'),
         present: resolve(__dirname, 'src/renderer/collab/present.html'),
         print: resolve(__dirname, 'src/renderer/collab/print.html'),
+        copyImage: resolve(__dirname, 'src/renderer/collab/copyImage.html'),
       },
     },
   },

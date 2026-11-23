@@ -160,7 +160,7 @@ export interface ClipboardActions {
   pasteClipboardFiles?: (files: File[]) => Promise<void>;
   /** Paste the in-window copy when the native paste event holds nothing of ours. */
   pasteInAppClipboard?: () => Promise<void>;
-  /** Desktop only: a picture of the selection on the OS clipboard, for other apps. */
+  /** A picture of the selection on the OS clipboard, for other apps; absent where it cannot be written. */
   copyAsImage?: () => Promise<void>;
 }
 
@@ -229,10 +229,13 @@ export function createClipboardActions(deps: ShellDeps): ClipboardActions {
       canvas: store.get().deck.canvas,
     });
     try {
-      const { width, height } = deps.runOperation
+      const { width, height, skipped = 0 } = deps.runOperation
         ? await deps.runOperation(`Rendering ${noun} as an image`, copy)
         : await copy();
-      setStatusMessage(`Copied ${noun} as a ${width} × ${height} px image.`);
+      const left = skipped > 0
+        ? ` ${skipped} ${skipped > 1 ? 'parts' : 'part'} (PDF or web page) could not be drawn and ${skipped > 1 ? 'were' : 'was'} left out.`
+        : '';
+      setStatusMessage(`Copied ${noun} as a ${width} × ${height} px image.${left}`);
     } catch (err) {
       console.error('Copy as Image failed:', err);
       setStatusMessage(`Could not copy as an image: ${err instanceof Error ? err.message : String(err)}`);

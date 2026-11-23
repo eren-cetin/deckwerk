@@ -891,13 +891,41 @@ async function performOp(
       return 'same';
     }
     case 'copy as image': {
-      // ⇧⌘C is a picture for other apps (desktop only); here, as on the
-      // desktop, it must not touch the deck or the selection it pictures.
+      // ⇧⌘C is a picture for other apps, drawn in a hidden frame of this
+      // page: it must not touch the deck or the selection it pictures, and
+      // the frame must be gone once the copy reports. Whether the clipboard
+      // took the picture is collabCopyImageBrowser's business: this page has
+      // no emulated focus, so the write itself may be refused.
       const texts = await session.allTexts();
       const ids = await session.allElementIds();
       const { selection } = await session.state();
+      // Watch the drawing frame come and go; the status line alone could be
+      // a previous copy's identical report.
+      await session.cdp.evaluate(`(() => {
+        const seen = window.__copyImageFrames = { added: 0, removed: 0 };
+        const hidden = (node) => node instanceof HTMLIFrameElement && node.getAttribute('aria-hidden') === 'true';
+        new MutationObserver((records, observer) => {
+          for (const record of records) {
+            seen.added += [...record.addedNodes].filter(hidden).length;
+            seen.removed += [...record.removedNodes].filter(hidden).length;
+          }
+          if (seen.removed > 0) observer.disconnect();
+        }).observe(document.body, { childList: true });
+      })()`);
       await session.chord('C', 'KeyC', 67, MOD | SHIFT);
-      await wait(120);
+      const settled = await session.cdp.evaluate<string | null>(`new Promise((resolve) => {
+        const deadline = Date.now() + 10000;
+        const poll = () => {
+          const seen = window.__copyImageFrames;
+          const text = document.getElementById('status')?.textContent ?? '';
+          const reported = /Copied \\d+ objects? as a|Could not copy as an image/.test(text);
+          if (seen.removed > 0 && seen.added === seen.removed && reported) resolve(null);
+          else if (Date.now() > deadline) resolve(JSON.stringify({ ...seen, text }));
+          else setTimeout(poll, 25);
+        };
+        poll();
+      })`);
+      if (settled) flag('routing', `⇧⌘C never finished drawing and reporting: ${settled}`);
       const after = await session.state();
       if (after.selection.join() !== selection.join()) {
         flag('routing', `⇧⌘C changed the selection: ${selection.join()} -> ${after.selection.join()}`);
