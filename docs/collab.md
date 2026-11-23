@@ -127,6 +127,30 @@ The picker browses the tree with a breadcrumb; New, Import and New folder all
 act in the folder you are looking at. Each row a person manages carries
 Rename…, and a deck row also Move… and Share….
 
+### Templates
+
+The server offers the template library of the machine it runs on — the same
+`~/.deckwerk/templates` folder (or `DECKWERK_TEMPLATES_DIR`) the desktop app
+saves to, through the same `src/main/templateStore.ts` — so a design saved in
+either one can be applied in the other.
+
+- `GET /api/templates` lists them, newest first.
+- `POST /api/templates?deck=<id>&name=<name>` saves that deck's design. It
+  reads the room's live session rather than the files, so edits the debounced
+  autosave has not written yet are part of it. A name already in use answers
+  `{status: "exists"}`; `&replace=1` overwrites it.
+- `POST /api/templates/take?deck=<id>&id=<template>` copies the template's
+  files into the deck and returns the template. The client applies it as one
+  ordinary transaction, so peers see it live and Undo puts the slides back.
+- `DELETE /api/templates?id=<template>` removes one.
+- `POST /api/decks?name=…&template=<id>` creates a deck that starts out
+  wearing the template.
+
+Saving and taking change a deck, so they need edit rights on it. A hosted
+session (the desktop app's Collaborate) refuses every template route: it
+shares one presentation, not its host's library. `/api/config` reports
+`templates: {canManage}`, or `null` where there are none.
+
 ### Access control (`--access`)
 
 By default the server has no notion of users: every deck under the root is
@@ -192,6 +216,10 @@ With the flag on:
   grants nothing by itself.
 - The `--access` argument names the admin's tailnet login: the admin sees and
   manages every deck.
+- **Templates are one library for the whole server.** Everyone can list them
+  and save a new one from a deck they can edit, and apply one to such a deck;
+  replacing or deleting a template — something other people may be using —
+  is for the admin only.
 - Display names come from the tailnet identity; `?name=` and the name prompt
   are ignored.
 - A remote agent bridge is admitted with the same tailnet identity as the

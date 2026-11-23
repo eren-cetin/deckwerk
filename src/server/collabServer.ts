@@ -14,6 +14,17 @@ import {
   createDeck, importAsset, importWebPage, loadDeck, loadTheme, resolveAsset, saveDeck,
 } from '../main/deckStore.js';
 import { exportDeck, webExportUnavailableReason } from '../main/exportDeck.js';
+import {
+  copyTemplateAssets,
+  createDeckFromTemplate,
+  deleteTemplate,
+  listTemplates,
+  readTemplate,
+  saveTemplate,
+  summarize as summarizeTemplate,
+  TemplateExistsError,
+} from '../main/templateStore.js';
+import type { DeckTemplate } from '../shared/deckTemplates.js';
 import { capabilities } from '../shared/capabilities.js';
 import { probeMedia } from '../main/ffmpeg.js';
 import {
@@ -669,6 +680,13 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
     ? resolveIdentity(request, accessControl)?.login === accessControl.admin
     : isLoopbackRequest(request);
   const canUseSharedAgent = (_request: IncomingMessage): boolean => Boolean(sharedAgent);
+  /**
+   * Whether this request may replace or delete saved templates. The library
+   * is shared by everyone on the server, so with --access only the admin may
+   * change what others have saved; without it there are no users to tell
+   * apart, as with everything else on that server.
+   */
+  const canManageTemplates = (request: IncomingMessage): boolean => !accessControl || isHostRequest(request);
 
   const agentChatId = (deckId: string, participantId: string | null): string | null => {
     if (sharedAgent && participantId) return sharedAgent.chatId(deckDirOf(deckId), participantId);
@@ -1030,6 +1048,9 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
           // do with that one. The client uses it to label its chrome.
           ...(deckParam ? { deckRole: await deckRoleOf(identity, deckParam) } : {}),
         } : null,
+        // The template library is the server machine's own (the desktop app's
+        // folder). A hosted session shares one deck, not its host's library.
+        templates: hostedDeckId ? null : { canManage: canManageTemplates(request) },
         agentPanel: canUseSharedAgent(request) ? {
           enabled: true,
           name: sharedAgent?.name ?? 'Agent',
@@ -1224,6 +1245,73 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
       || path === '/api/import-keynote' || path === '/api/import-pptx')
       && request.method !== 'GET') {
       respondJson(response, 403, { error: 'this session hosts a single shared presentation' });
+      return;
+    }
+
+    // Deck templates: the same library the desktop app keeps
+    // (main/templateStore.ts). Saving reads the room's live session, so edits
+    // not yet written to disk are part of the design; taking one copies its
+    // files into the deck and hands it to the client, which applies it as an
+    // ordinary undoable transaction. Saving and taking need edit rights on
+    // the deck (the ?deck= check above); replacing and deleting change what
+    // everyone on the server sees.
+    if (path === '/api/templates' || path === '/api/templates/take') {
+      if (hostedDeckId) {
+        return respondJson(response, 403, { error: 'this session hosts a single shared presentation' });
+      }
+      const templateIdParam = url.searchParams.get('id') ?? '';
+      const validTemplateId = /^[a-z0-9][a-z0-9-]*$/.test(templateIdParam);
+      if (path === '/api/templates' && request.method === 'GET') {
+        respondJson(response, 200, await listTemplates());
+        return;
+      }
+      if (path === '/api/templates' && request.method === 'DELETE') {
+        if (!canManageTemplates(request)) {
+          return respondJson(response, 403, { error: 'only the admin can delete templates' });
+        }
+        if (!validTemplateId) return respondJson(response, 400, { error: 'missing or invalid template id' });
+        await deleteTemplate(templateIdParam);
+        respondJson(response, 200, { ok: true });
+        return;
+      }
+      if (request.method !== 'POST') return respondJson(response, 405, { error: 'method not allowed' });
+      if (!deckParam) return respondJson(response, 400, { error: 'missing deck' });
+      let deckDir: string;
+      try {
+        deckDir = deckDirOf(deckParam);
+      } catch {
+        return respondJson(response, 400, { error: 'invalid deck id' });
+      }
+      if (!isDeckDir(deckDir)) return respondJson(response, 404, { error: 'no such deck' });
+      if (path === '/api/templates') {
+        const name = (url.searchParams.get('name') ?? '').trim();
+        if (!name) return respondJson(response, 400, { error: 'missing template name' });
+        const replace = url.searchParams.get('replace') === '1';
+        if (replace && !canManageTemplates(request)) {
+          return respondJson(response, 403, { error: 'only the admin can replace a template' });
+        }
+        const room = await getRoom(deckParam);
+        try {
+          const template = await saveTemplate(
+            room.session.dir, room.session.deck, room.session.themeCss, name, { replace },
+          );
+          respondJson(response, 200, { status: 'saved', template: summarizeTemplate(template) });
+        } catch (error) {
+          if (!(error instanceof TemplateExistsError)) throw error;
+          respondJson(response, 200, { status: 'exists', id: error.id });
+        }
+        return;
+      }
+      if (!validTemplateId) return respondJson(response, 400, { error: 'missing or invalid template id' });
+      let template: DeckTemplate;
+      try {
+        template = await readTemplate(templateIdParam);
+      } catch {
+        return respondJson(response, 404, { error: 'no such template' });
+      }
+      const room = await getRoom(deckParam);
+      await copyTemplateAssets(template, room.session.dir);
+      respondJson(response, 200, template);
       return;
     }
 
@@ -1432,7 +1520,18 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
         return respondJson(response, 400, { error: 'missing or invalid name' });
       }
       if (existsSync(dir)) return respondJson(response, 409, { error: `deck "${id}" already exists` });
-      await createDeck(dir, name);
+      const templateParam = url.searchParams.get('template');
+      if (templateParam) {
+        let template: DeckTemplate;
+        try {
+          template = await readTemplate(templateParam);
+        } catch {
+          return respondJson(response, 404, { error: 'no such template' });
+        }
+        await createDeckFromTemplate(dir, template, name);
+      } else {
+        await createDeck(dir, name);
+      }
       // New decks start private to their creator: accidental exposure should
       // take an explicit act, not the absence of one.
       if (accessControl && identity) {
