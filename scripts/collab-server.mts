@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { startCollabServer, defaultClientDir } from '../src/server/collabServer.js';
 import { LocalAgentRegistry } from '../src/server/localAgents.js';
+import { webExportUnavailableReason } from '../src/main/exportDeck.js';
 
 /**
  * Collaborative editing server:
@@ -83,6 +84,11 @@ process.stdout.write(`${JSON.stringify({
 if (!clientDir) {
   process.stderr.write('note: dist/collab not found — API/WS only (use the vite dev client)\n');
 }
+// `npm run collab` builds the export player first; running this script
+// directly does not, and Save As › Web would then fail only when someone
+// tries it.
+const exportUnavailable = webExportUnavailableReason();
+if (exportUnavailable) process.stderr.write(`note: web export disabled — ${exportUnavailable}\n`);
 
 const stop = () => {
   void server.close().then(() => process.exit(0));
