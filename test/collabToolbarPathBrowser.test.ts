@@ -39,7 +39,7 @@ describe.skipIf(!electronBinary)('deck path in the collaboration toolbar', () =>
     const rows = await eventually(async () => cdp.evaluate<string[]>(
       `[...document.querySelectorAll('#ctx-menu button')].map((row) => row.textContent)`),
     'the deck folder menu never opened', (found) => found.length > 0);
-    expect(rows).toEqual(['Copy link', 'Open folder…']);
+    expect(rows).toEqual(['Copy link', 'Open folder…', 'Rename…']);
     await cdp.evaluate(`([...document.querySelectorAll('#ctx-menu button')]
       .find((row) => row.textContent === 'Open folder…').click(), true)`);
     const crumbs = await eventually(async () => cdp.evaluate<string>(

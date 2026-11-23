@@ -15,6 +15,7 @@
  */
 import { createToolbarPicker, type ToolbarPickerOption } from '../editor/exportPicker.js';
 import { showTemplatePicker } from '../editor/templateDialogs.js';
+import { showRenameDeckDialog } from '../editor/renameDialog.js';
 import { buildZip, type ZipInput } from '../../shared/zip.js';
 
 
@@ -396,6 +397,11 @@ export function showDeckPicker(opts: {
   folder?: string;
   /** Whether the server keeps templates, so a deck can start from one. */
   templates?: boolean;
+  /**
+   * The deck open in this tab was renamed from the picker. An editor follows
+   * it in place; without this the tab navigates to the new id.
+   */
+  onCurrentRenamed?: (previousId: string, deckId: string, title: string) => void;
 }): void {
   const overlay = document.createElement('div');
   overlay.className = 'workflow-overlay';
@@ -482,19 +488,23 @@ export function showDeckPicker(opts: {
     // manage — the same rule the folder rows already follow.
     if (!(deck.canManage ?? !opts.access)) return rowGroup(row, []);
     const rename = rowButton('Rename…', 'Give this presentation another name', () => {
-      const name = (window.prompt('New name for this presentation?', deck.title) ?? '').trim();
-      if (!name || name === deck.title) return;
       void (async () => {
+        const name = await showRenameDeckDialog(deck.id.slice(deck.id.lastIndexOf('/') + 1));
+        if (!name) return;
         const response = await fetch(
           `/api/decks/rename?deck=${encodeURIComponent(deck.id)}&name=${encodeURIComponent(name)}`,
           { method: 'POST' },
         );
-        const body = await response.json() as { id?: string; error?: string };
+        const body = await response.json() as { id?: string; title?: string; error?: string };
         if (!response.ok || !body.id) throw new Error(body.error ?? `rename failed (${response.status})`);
-        opts.onStatus(`Renamed to “${name}”`);
+        opts.onStatus(`Renamed to “${body.title ?? name}”`);
         // The name is also the last segment of the deck id, so a deck open in
-        // this tab has just moved out from under it.
-        if (deck.id === current) goTo(body.id);
+        // this tab has just moved out from under it. An editor follows it
+        // where it stands, keeping undo; anything else reloads at the new id.
+        if (deck.id === current && opts.onCurrentRenamed) {
+          opts.onCurrentRenamed(deck.id, body.id, body.title ?? name);
+          reopen(folder);
+        } else if (deck.id === current) goTo(body.id);
         else reopen(folder);
       })().catch((error) => opts.onStatus(`Rename failed: ${error instanceof Error ? error.message : error}`));
     });

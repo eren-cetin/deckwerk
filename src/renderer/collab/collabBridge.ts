@@ -7,6 +7,7 @@ import {
   type ClientMessage,
   type CursorPosition,
   type PresenceState,
+  type ServerRenamedMessage,
   type ServerWelcomeMessage,
 } from '@shared/collab.js';
 import type { Deck } from '@shared/deck.js';
@@ -70,6 +71,13 @@ export interface CollabBridgeHooks {
    * tell the user that work done while disconnected did not survive.
    */
   onEditsDiscarded?: (count: number) => void;
+  /**
+   * The deck's folder was renamed while open. The session carries on; the
+   * caller moves whatever names the deck by id (its URL, asset links, and
+   * this bridge's own URL via setUrl). May arrive more than once for one
+   * rename, so handling it must be idempotent.
+   */
+  onRenamed?: (message: ServerRenamedMessage) => void;
 }
 
 export class CollabBridge {
@@ -86,7 +94,7 @@ export class CollabBridge {
   private participant: string | undefined;
 
   constructor(
-    private readonly url: string,
+    private url: string,
     private name: string | undefined,
     private readonly hooks: CollabBridgeHooks,
   ) {}
@@ -147,6 +155,14 @@ export class CollabBridge {
       }, this.reconnectDelay);
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000);
     });
+  }
+
+  /**
+   * Point later reconnects at another URL — the deck's new id after a rename.
+   * The live socket stays: the server moved this room, not the connection.
+   */
+  setUrl(url: string): void {
+    this.url = url;
   }
 
   /**
@@ -360,6 +376,9 @@ export class CollabBridge {
         // Deliberate teardown, not a network blip: don't reconnect.
         this.closed = true;
         this.hooks.onEnded?.();
+        return;
+      case 'renamed':
+        this.hooks.onRenamed?.(message);
         return;
     }
   }

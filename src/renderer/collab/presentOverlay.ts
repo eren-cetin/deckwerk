@@ -87,6 +87,9 @@ export function presentUrl(
   const params = new URLSearchParams({
     deck: deckId,
     slide: String(slideIndex + 1),
+    // The pair's private channel, fixed for the show: a rename mid-talk moves
+    // the deck's id, and the two windows must still hear each other.
+    channel: deckId,
   });
   // Both bounds are 1-based in the URL, like `slide`.
   if (extra.endSlideIndex !== undefined) {

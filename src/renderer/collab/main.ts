@@ -68,6 +68,7 @@ import { createTemplateFlows } from '../editor/templateActions.js';
 import { DesignWorkspace } from '../editor/designWorkspace.js';
 import { installResponsiveToolbar } from '../editor/responsiveToolbar.js';
 import { deckPathParts } from '../editor/deckPath.js';
+import { showRenameDeckDialog } from '../editor/renameDialog.js';
 import { openContextMenu } from '../editor/contextMenuPlacement.js';
 
 /**
@@ -150,16 +151,22 @@ interface ServerConfig {
     mode?: 'local';
   };
   /** Present when the server runs with --access: who the server says we are. */
-  access?: null | { user: string; name: string; admin: boolean };
+  access?: null | {
+    user: string;
+    name: string;
+    admin: boolean;
+    /** This person's role on the open deck; asked for with ?deck=. */
+    deckRole?: 'owner' | 'edit' | 'view' | null;
+  };
   /** The server's template library; null in a hosted session or on an older server. */
   templates?: null | { canManage: boolean };
 }
 
 let serverConfig: ServerConfig = { hosted: false, deckId: null, urls: [], agentPanel: null, access: null };
 
-async function fetchServerConfig(): Promise<ServerConfig> {
+async function fetchServerConfig(deck?: string): Promise<ServerConfig> {
   try {
-    const response = await fetch('/api/config');
+    const response = await fetch(deck ? `/api/config?deck=${encodeURIComponent(deck)}` : '/api/config');
     if (response.ok) return await response.json() as ServerConfig;
   } catch {
     // Older server without /api/config; behave like the multi-deck server.
@@ -169,7 +176,7 @@ async function fetchServerConfig(): Promise<ServerConfig> {
 
 /* --- deck selection -------------------------------------------------------- */
 
-const deckId = new URLSearchParams(location.search).get('deck');
+const initialDeckId = new URLSearchParams(location.search).get('deck');
 const initialView = decodeEditorView(new URLSearchParams(location.search).get('view'));
 let initialViewPending = initialView !== null;
 
@@ -199,7 +206,7 @@ async function runOperation<T>(message: string, action: (operation: OperationHan
   }
 }
 
-if (!deckId) {
+if (!initialDeckId) {
   el('status').textContent = 'Connecting…';
   void fetchServerConfig().then((config) => {
     if (config.hosted && config.deckId) {
@@ -225,7 +232,17 @@ if (!deckId) {
 
 /* --- boot ----------------------------------------------------------------- */
 
-installNetApi({ deckId, saveTheme: (css) => bridge.sendTheme(css) });
+/**
+ * The open deck's id. It changes when someone renames the deck while it is
+ * open, so everything that builds a URL from it reads it through
+ * currentDeckId() at the moment it needs it.
+ */
+let openDeckId: string = initialDeckId;
+const currentDeckId = (): string => openDeckId;
+const wsUrlFor = (deck: string): string =>
+  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?deck=${encodeURIComponent(deck)}`;
+
+installNetApi({ deckId: currentDeckId, saveTheme: (css) => bridge.sendTheme(css) });
 
 const store = new EditorStore(emptyDeck('Connecting…'));
 connectRecentColors(store);
@@ -338,7 +355,7 @@ let connected = false;
 const connectionNotice = createConnectionNotice({
   mode: 'editor',
   backup: () => ({
-    fileName: `${deckId}-backup.json`,
+    fileName: `${currentDeckId()}-backup.json`,
     text: JSON.stringify(
       { deck: store.get().deck, themeCss: cssEditor.getValue() },
       null,
@@ -347,7 +364,7 @@ const connectionNotice = createConnectionNotice({
   }),
 });
 
-const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?deck=${encodeURIComponent(deckId)}`;
+const wsUrl = wsUrlFor(currentDeckId());
 // The hello name is set just before connect(): an access-controlled server
 // assigns names from the tailnet identity, so prompting for one would be
 // asking a question whose answer the server ignores.
@@ -363,8 +380,8 @@ const bridge = new CollabBridge(wsUrl, undefined, {
     connectionState = `connected as ${welcome.self.name}`;
     // The first welcome opens the document; every later one is a reconnect of
     // the same session, where the revision log and the selection must survive.
-    if (welcomed) store.resyncRemote(welcome.deck, `(collab) ${deckId}`);
-    else store.load(welcome.deck, `(collab) ${deckId}`, { keepView: true });
+    if (welcomed) store.resyncRemote(welcome.deck, `(collab) ${currentDeckId()}`);
+    else store.load(welcome.deck, `(collab) ${currentDeckId()}`, { keepView: true });
     welcomed = true;
     if (initialViewPending) {
       restoreEditorView(store, initialView);
@@ -416,6 +433,7 @@ const bridge = new CollabBridge(wsUrl, undefined, {
       ? 'Reconnected — 1 change made while disconnected could not be saved and was discarded.'
       : `Reconnected — ${count} changes made while disconnected could not be saved and were discarded.`);
   },
+  onRenamed: (message) => followRename(message.previousId, message.deckId, message.title),
   onEnded: () => {
     connected = false;
     connectionState = 'session ended by the host';
@@ -576,7 +594,7 @@ async function exportPdf(): Promise<void> {
   const choice = await showPdfExportDialog();
   if (!choice) return;
   const query = new URLSearchParams({
-    deck: deckId!,
+    deck: currentDeckId(),
     mode: choice.includeEachBuildStage ? 'every' : 'final',
   });
   const tab = window.open(`./print.html?${query.toString()}`, '_blank');
@@ -604,7 +622,7 @@ function startPresentation(speakerView = false): void {
   const { deck, slideIndex, slideSelection } = store.get();
   const range = rangeForSlideSelection(deck.slides, slideSelection);
   startPresenting(
-    deckId!,
+    currentDeckId(),
     range?.start ?? slideIndex,
     () => ({ deck: store.get().deck, themeCss: cssEditor.getValue() }),
     { endSlideIndex: range?.end, speakerView, onStatus: setStatusMessage },
@@ -621,7 +639,7 @@ function startPresentation(speakerView = false): void {
  * export player) is settled before any bytes move.
  */
 async function exportWeb(): Promise<void> {
-  const query = `deck=${encodeURIComponent(deckId!)}`;
+  const query = `deck=${encodeURIComponent(currentDeckId())}`;
   const refusal = await runOperation('Checking the web export…', async () => {
     const probe = await fetch(`/api/export/web?${query}&probe=1`);
     if (probe.ok) return null;
@@ -634,7 +652,7 @@ async function exportWeb(): Promise<void> {
   }
   const link = document.createElement('a');
   link.href = `/api/export/web?${query}`;
-  link.download = `${deckId}-web.zip`;
+  link.download = `${currentDeckId()}-web.zip`;
   link.click();
   // A browser download reports its own progress and completion, and nothing
   // here is told when it finishes — so say what is happening and stop there
@@ -650,17 +668,18 @@ let deckNameLabel: HTMLButtonElement | null = null;
  * folders, so the path is the deck id and there is no home to shorten.
  */
 function syncDeckNameLabel(): void {
-  if (!deckNameLabel || !deckId) return;
-  const { parent, name } = deckPathParts(deckId);
-  deckNameLabel.title = `${deckId}\nClick to copy a link or open its folder`;
-  deckNameLabel.setAttribute('aria-label', `Presentation ${deckId}`);
+  if (!deckNameLabel) return;
+  const { parent, name } = deckPathParts(currentDeckId());
+  deckNameLabel.title = canRename()
+    ? `${currentDeckId()}\nClick to copy a link, open its folder or rename it`
+    : `${currentDeckId()}\nClick to copy a link or open its folder`;
+  deckNameLabel.setAttribute('aria-label', `Presentation ${currentDeckId()}`);
   deckNameLabel.querySelector<HTMLElement>('.bar-deck-parent > bdi')!.textContent = parent;
   deckNameLabel.querySelector<HTMLElement>('.bar-deck-parent')!.hidden = parent === '';
   deckNameLabel.querySelector<HTMLElement>('.bar-deck-folder')!.textContent = name;
 }
 
 function openDeckPathMenu(anchor: HTMLElement): void {
-  if (!deckId) return;
   document.getElementById('ctx-menu')?.remove();
   const menu = document.createElement('div');
   menu.id = 'ctx-menu';
@@ -685,13 +704,91 @@ function openDeckPathMenu(anchor: HTMLElement): void {
       onStatus: setStatusMessage,
       access: serverConfig.access ?? null,
       templates: Boolean(serverConfig.templates),
-      folder: folderOf(deckId ?? ''),
+      folder: folderOf(currentDeckId()),
+      onCurrentRenamed: followRename,
     }));
   }
+  if (canRename()) item('Rename…', () => void renamePresentation());
   const box = anchor.getBoundingClientRect();
   openContextMenu(menu, { x: box.left, y: box.bottom + 4 });
   menu.addEventListener('pointerdown', (event) => event.stopPropagation());
   setTimeout(() => document.addEventListener('pointerdown', () => menu.remove(), { once: true }), 0);
+}
+
+/**
+ * Whether this person may rename the open deck: anyone on a server without
+ * --access, otherwise its owner or the admin — the server's own rule. A
+ * hosted session shares one fixed deck, which joiners never rename.
+ */
+function canRename(): boolean {
+  if (serverConfig.hosted) return false;
+  const access = serverConfig.access;
+  return !access || access.admin || access.deckRole === 'owner';
+}
+
+/**
+ * Carry on under the deck's new id after its folder was renamed — by this
+ * tab, by another, or before this tab (re)joined. Nothing reloads: the
+ * session, undo and selection stay; only what names the deck by id moves.
+ * Arrives twice for this tab's own rename (the reply and the broadcast), so
+ * a second call for the same id does nothing.
+ */
+function followRename(previousId: string, nextId: string, title: string): void {
+  if (nextId === openDeckId) return;
+  const ownRename = renamingTo === nextId;
+  openDeckId = nextId;
+  const params = new URLSearchParams(location.search);
+  params.set('deck', nextId);
+  history.replaceState(history.state, '', `${location.pathname}?${params.toString()}${location.hash}`);
+  store.moveTo(`(collab) ${nextId}`);
+  bridge.setUrl(wsUrlFor(nextId));
+  syncDeckNameLabel();
+  if (agentPanelBrowserApi) {
+    agentPanelBrowserApi.reconnect();
+    agentPanel?.setConnectCommand(localAgentConnectCommand(nextId, agentPanelBrowserApi.participantId));
+  }
+  if (!ownRename) {
+    const from = deckPathParts(previousId).name;
+    setStatusMessage(`“${from}” was renamed to “${title}”`);
+  } else {
+    renderStatus();
+  }
+}
+
+/** The id this tab's own rename is moving the deck to, while it runs. */
+let renamingTo: string | null = null;
+
+/**
+ * Rename the open deck's folder. Everyone with it open follows — the server
+ * moves the live session, and every edit, saved or not, comes along.
+ */
+async function renamePresentation(): Promise<void> {
+  const from = currentDeckId();
+  const current = deckPathParts(from).name;
+  const name = await showRenameDeckDialog(current);
+  if (!name) return;
+  try {
+    const renamed = await runOperation(`Renaming ${current}…`, async (operation) => {
+      operation.update(`Renaming ${current} to ${name}…`);
+      const folder = folderOf(from);
+      renamingTo = folder ? `${folder}/${name}` : name;
+      const response = await fetch(
+        `/api/decks/rename?deck=${encodeURIComponent(from)}&name=${encodeURIComponent(name)}`,
+        { method: 'POST' },
+      );
+      const body = await response.json().catch(() => null) as { id?: string; title?: string; error?: string } | null;
+      if (!response.ok || !body?.id) throw new Error(body?.error ?? `HTTP ${response.status}`);
+      return { id: body.id, title: body.title ?? name };
+    });
+    // The server may have tidied the name (characters a folder cannot hold).
+    renamingTo = renamed.id;
+    followRename(from, renamed.id, renamed.title);
+    setStatusMessage(`Renamed the presentation to ${deckPathParts(renamed.id).name}`);
+  } catch (err) {
+    setStatusMessage(`Could not rename the presentation: ${err instanceof Error ? err.message : err}`);
+  } finally {
+    renamingTo = null;
+  }
 }
 
 function buildToolbar(): void {
@@ -727,7 +824,7 @@ function buildToolbar(): void {
   if (!serverConfig.hosted) {
     // New and imported presentations land beside the open one, so working
     // inside a folder keeps working inside it.
-    const here = folderOf(deckId ?? '');
+    const here = folderOf(currentDeckId());
     const createDeck = (): void => {
       void createDeckOnServer(here).catch((error) =>
         setStatusMessage(`Create failed: ${error instanceof Error ? error.message : error}`));
@@ -737,6 +834,7 @@ function buildToolbar(): void {
       onStatus: setStatusMessage,
       access: serverConfig.access ?? null,
       templates: Boolean(serverConfig.templates),
+      onCurrentRenamed: followRename,
     });
     const importEntries = [
       { label: 'Keynote…', action: () => importKeynoteToServer(setStatusMessage, here) },
@@ -771,8 +869,8 @@ function buildToolbar(): void {
   // browser's own "Save as PDF" stands in for the desktop app's printToPDF.
   const downloadDeck = (): void => {
     const link = document.createElement('a');
-    link.href = `/api/download?deck=${encodeURIComponent(deckId!)}`;
-    link.download = `${deckId}.zip`;
+    link.href = `/api/download?deck=${encodeURIComponent(currentDeckId())}`;
+    link.download = `${currentDeckId()}.zip`;
     link.click();
   };
   const saveAsTemplate = (): void => void templateFlows.saveAsTemplate();
@@ -823,7 +921,7 @@ function buildToolbar(): void {
   // Access-controlled server: the sharing dialog handles both cases — owners
   // and the admin get controls, everyone else a read-only summary.
   if (serverConfig.access) {
-    const share = (): void => showShareDialog(deckId!, setStatusMessage);
+    const share = (): void => showShareDialog(currentDeckId(), setStatusMessage);
     secondaryActions.append(barButton('Share…', share));
     compactSecondaryEntries.push({ label: 'Share…', action: share });
   }
@@ -847,7 +945,7 @@ function buildToolbar(): void {
         setStatusMessage('No invite link available');
         return;
       }
-      const link = `${base}?deck=${encodeURIComponent(deckId!)}`;
+      const link = `${base}?deck=${encodeURIComponent(currentDeckId())}`;
       void copyText(link).then(
         () => setStatusMessage('Invite link copied'),
         () => setStatusMessage(`Could not copy — invite: ${link}`),
@@ -1007,20 +1105,20 @@ function renderStatus(): void {
 
 // The toolbar depends on whether this is a hosted session; one round-trip
 // before first paint of the buttons keeps New/Open/Import from flashing in.
-void fetchServerConfig().then((config) => {
+void fetchServerConfig(currentDeckId()).then((config) => {
   serverConfig = config;
   if (config.templates) {
-    installTemplateApi({ deckId, canManage: config.templates.canManage });
+    installTemplateApi({ deckId: currentDeckId, canManage: config.templates.canManage });
     themePanel.enableTemplates(templateFlows.panelActions());
   }
   if (config.agentPanel?.enabled && !agentPanel) {
-    agentPanelBrowserApi = createAgentPanelApi(deckId!);
+    agentPanelBrowserApi = createAgentPanelApi(currentDeckId);
     const local = config.agentPanel.mode === 'local';
     agentPanel = new AgentPanel({
       api: agentPanelBrowserApi.api,
-      currentDeckPath: () => deckId,
+      currentDeckPath: currentDeckId,
       title: config.agentPanel.name,
-      connectCommand: localAgentConnectCommand(deckId!, agentPanelBrowserApi.participantId),
+      connectCommand: localAgentConnectCommand(currentDeckId(), agentPanelBrowserApi.participantId),
     });
     // The bridge a person starts from that panel pairs with this browser's
     // selection through the participant id announced in the hello.

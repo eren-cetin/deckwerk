@@ -249,26 +249,58 @@ export function connectAgentBridge(options: ConnectOptions): AgentBridge {
         + 'Choose another folder with --dir.');
     }
     if (existsSync(marker)) {
-      const previous = JSON.parse(await readFile(marker, 'utf8')) as { origin?: string; deckId?: string };
-      if (previous.origin !== target.origin || previous.deckId !== target.deckId) {
+      const previous = JSON.parse(await readFile(marker, 'utf8')) as {
+        origin?: string; deckId?: string; previousDeckIds?: string[];
+      };
+      const renamedSince = previous.origin === target.origin && typeof previous.deckId === 'string'
+        && (previous.previousDeckIds ?? []).includes(target.deckId);
+      if (renamedSince) {
+        // The session URL predates a rename this mirror already followed:
+        // carry on under the deck's newer name rather than the stale one.
+        log(`the deck "${target.deckId}" is now "${previous.deckId}"; following it`);
+        moveTarget(previous.deckId!);
+        previousDeckIds = previous.previousDeckIds ?? [];
+      } else if (previous.origin !== target.origin || previous.deckId !== target.deckId) {
         throw new Error(`${dir} mirrors ${previous.origin}/?deck=${previous.deckId}, not this session. `
           + 'Choose another folder with --dir.');
+      } else {
+        previousDeckIds = previous.previousDeckIds ?? [];
       }
     }
     await mkdir(editDir, { recursive: true });
     await mkdir(join(dir, 'assets'), { recursive: true });
     await mkdir(paths.inbox, { recursive: true });
     await mkdir(paths.responses, { recursive: true });
-    await atomicJson(marker, {
-      origin: target.origin,
-      deckId: target.deckId,
-      participantId: target.participantId,
-      connectedAt: new Date().toISOString(),
-    });
+    await writeMarker();
     // The agent's command: generated, executable, always the server's version.
     const helper = join(dir, HELPER_FILE);
     await writeFile(helper, deckHelperSource, 'utf8');
     await chmod(helper, 0o755);
+  }
+
+  /**
+   * Ids this deck had before renames the mirror followed. Kept in the marker
+   * so the folder is still recognised as this deck's when the bridge is
+   * started again from the original session URL.
+   */
+  let previousDeckIds: string[] = [];
+
+  async function writeMarker(): Promise<void> {
+    await atomicJson(join(dir, MIRROR_MARKER_FILE), {
+      origin: target.origin,
+      deckId: target.deckId,
+      ...(previousDeckIds.length > 0 ? { previousDeckIds } : {}),
+      participantId: target.participantId,
+      connectedAt: new Date().toISOString(),
+    });
+  }
+
+  /** Point the API and the socket's reconnects at the deck's new id. */
+  function moveTarget(deckId: string): void {
+    target.deckId = deckId;
+    const ws = new URL(target.wsUrl);
+    ws.searchParams.set('deck', deckId);
+    target.wsUrl = ws.href;
   }
 
   async function syncFiles(): Promise<void> {
@@ -872,6 +904,18 @@ export function connectAgentBridge(options: ConnectOptions): AgentBridge {
       case 'ended': {
         log('the host ended the session');
         await close();
+        return;
+      }
+      case 'renamed': {
+        // The folder keeps its name: it is the agent's working directory,
+        // and moving it under a running agent would pull the ground away.
+        if (msg.deckId === target.deckId) return;
+        const previous = target.deckId;
+        moveTarget(msg.deckId);
+        previousDeckIds = [...new Set([...previousDeckIds, previous])].filter((id) => id !== msg.deckId);
+        await writeMarker();
+        await writeGuides();
+        log(`the deck was renamed to "${msg.title}"; now following "${msg.deckId}"`);
         return;
       }
     }

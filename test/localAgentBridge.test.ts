@@ -315,6 +315,45 @@ describe('slide-agent connect', { timeout: 120_000 }, () => {
     expect(JSON.parse((await cli('context', mirrorDir)).stdout).live).toBe(false);
   });
 
+  it('follows a rename of the deck it mirrors without moving the mirror', async () => {
+    await connectPeer({ name: 'Vincent', participant: PARTICIPANT });
+    bridge = connectAgentBridge({ url: sessionUrl(), dir: mirrorDir, name: 'Test agent', io: io() });
+    await bridge.ready;
+
+    const renamed = await fetch(`${base()}/api/decks/rename?deck=${DECK_ID}&name=Renamed%20Demo`, { method: 'POST' });
+    expect(renamed.status).toBe(200);
+    const marker = await until(async () => {
+      const json = JSON.parse(await readFile(join(mirrorDir, '.deckwerk-mirror.json'), 'utf8'));
+      return json.deckId === 'Renamed Demo' ? json : null;
+    }, 'the mirror marker to follow the rename');
+    expect(marker.previousDeckIds).toEqual([DECK_ID]);
+    expect(bridge.target.deckId).toBe('Renamed Demo');
+    expect(bridge.target.wsUrl).toContain('deck=Renamed+Demo');
+    await until(async () => JSON.parse(await readFile(join(mirrorDir, 'deck.json'), 'utf8')).title === 'Renamed Demo',
+      'the title change to reach the mirror');
+    expect(await readFile(join(mirrorDir, 'AGENTS.md'), 'utf8')).toContain('Renamed Demo');
+
+    // The agent keeps working from the same folder, now against the new id,
+    // and the browser panel still sees it under that id.
+    const commented = await cli('comments', mirrorDir, '--add', 'After the rename', '--slide', '1');
+    expect(commented.code).toBe(EXIT_OK);
+    const panel = await (await fetch(
+      `${base()}/api/agent-panel/state?deck=Renamed%20Demo&participant=${PARTICIPANT}`,
+    )).json() as AgentChatState;
+    expect(panel).toMatchObject({ connection: 'ready', agentName: 'Test agent' });
+    await server.flush();
+    const saved = parseDeck(JSON.parse(await readFile(join(rootDir, 'Renamed Demo', 'deck.json'), 'utf8')));
+    expect(saved.slides[0].comments?.map((comment) => comment.text)).toEqual(['After the rename']);
+    expect(existsSync(deckDir)).toBe(false);
+
+    // Started again from the original session URL, the bridge recognises its
+    // own mirror and carries on under the deck's new name.
+    await bridge.close();
+    bridge = connectAgentBridge({ url: sessionUrl(), dir: mirrorDir, name: 'Test agent', io: io() });
+    await bridge.ready;
+    expect(bridge.target.deckId).toBe('Renamed Demo');
+  });
+
   it('answers a stale revision with a conflict instead of applying it', async () => {
     bridge = connectAgentBridge({ url: sessionUrl(), dir: mirrorDir, io: io() });
     await bridge.ready;

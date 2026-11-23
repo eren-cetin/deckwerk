@@ -16,7 +16,8 @@ import { clipboardImageName, type ClipboardImageSource } from '@shared/clipboard
  * with optional chaining.
  */
 export interface NetApiOptions {
-  deckId: string;
+  /** The open deck's id, read on every call: a live rename changes it. */
+  deckId: () => string;
   saveTheme: (css: string) => void;
 }
 
@@ -62,15 +63,15 @@ function uploadFile(deck: string, file: File, token?: string): Promise<ImportedA
 }
 
 export function installNetApi(options: NetApiOptions): void {
-  const deck = encodeURIComponent(options.deckId);
+  const deck = (): string => encodeURIComponent(options.deckId());
   const api = {
     assetUrl: (src: string): string =>
-      `/decks/${deck}/${src.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/')}`,
+      `/decks/${deck()}/${src.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/')}`,
 
     importAssetFiles: async (files: File[], progressToken?: string): Promise<ImportedAsset[]> => {
       const imported: ImportedAsset[] = [];
       for (const file of files) {
-        imported.push(await uploadFile(deck, file, progressToken));
+        imported.push(await uploadFile(deck(), file, progressToken));
       }
       return imported;
     },
@@ -87,9 +88,9 @@ export function installNetApi(options: NetApiOptions): void {
           const binary = atob(source.base64);
           const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
           const name = clipboardImageName(source.mime) ?? 'Pasted image.png';
-          return await uploadFile(deck, new File([bytes], name, { type: source.mime }));
+          return await uploadFile(deck(), new File([bytes], name, { type: source.mime }));
         }
-        const response = await fetch(`/api/import-url?deck=${deck}`, {
+        const response = await fetch(`/api/import-url?deck=${deck()}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ url: source.url }),
@@ -113,13 +114,13 @@ export function installNetApi(options: NetApiOptions): void {
     pathForFile: (): string => '',
 
     probeAsset: async (src: string): Promise<MediaInfo> => {
-      const response = await fetch(`/api/probe?deck=${deck}&src=${encodeURIComponent(src)}`);
+      const response = await fetch(`/api/probe?deck=${deck()}&src=${encodeURIComponent(src)}`);
       if (!response.ok) return { width: null, height: null, duration: null };
       return response.json() as Promise<MediaInfo>;
     },
 
     loadTheme: async (): Promise<string> => {
-      const response = await fetch(`/api/theme?deck=${deck}`);
+      const response = await fetch(`/api/theme?deck=${deck()}`);
       return response.ok ? response.text() : '';
     },
     saveTheme: async (css: string): Promise<void> => {
@@ -149,20 +150,22 @@ async function templateRequest<T>(path: string, method = 'GET'): Promise<T> {
  * `deleteTemplate` exists only for someone allowed to change the library:
  * the shared code feature-tests it to decide whether to offer Delete.
  */
-export function installTemplateApi(options: { deckId: string | null; canManage: boolean }): void {
+export function installTemplateApi(options: { deckId: (() => string) | null; canManage: boolean }): void {
   const target = ((window as unknown as { api?: Record<string, unknown> }).api ??= {});
   target.listTemplates = (): Promise<TemplateSummary[]> => templateRequest('/api/templates');
-  if (options.deckId !== null) {
-    const deck = encodeURIComponent(options.deckId);
+  const deckId = options.deckId;
+  if (deckId !== null) {
+    // Read per call: a live rename moves the open deck to another id.
+    const deck = (): string => encodeURIComponent(deckId());
     // The server saves from its live room, which holds everyone's edits, so
     // the deck and stylesheet this side would send are not needed.
     target.saveTemplate = (name: string, _deck: Deck, _css: string, replace = false): Promise<TemplateSaveResult> =>
       templateRequest(
-        `/api/templates?deck=${deck}&name=${encodeURIComponent(name)}${replace ? '&replace=1' : ''}`,
+        `/api/templates?deck=${deck()}&name=${encodeURIComponent(name)}${replace ? '&replace=1' : ''}`,
         'POST',
       );
     target.takeTemplate = (id: string): Promise<DeckTemplate> =>
-      templateRequest(`/api/templates/take?deck=${deck}&id=${encodeURIComponent(id)}`, 'POST');
+      templateRequest(`/api/templates/take?deck=${deck()}&id=${encodeURIComponent(id)}`, 'POST');
   }
   if (options.canManage) {
     target.deleteTemplate = async (id: string): Promise<void> => {

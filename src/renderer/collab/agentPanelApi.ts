@@ -4,16 +4,24 @@ import type { AgentPanelApi } from '../editor/agentPanel.js';
 export interface AgentPanelBrowserApi {
   api: AgentPanelApi;
   participantId: string;
+  /** Reopen the state stream under the deck's current id (after a rename). */
+  reconnect: () => void;
   close: () => void;
 }
 
-/** Private browser transport for filesystem-bridge status and scratchpad. */
-export function createAgentPanelApi(deckId: string): AgentPanelBrowserApi {
+/**
+ * Private browser transport for filesystem-bridge status and scratchpad.
+ *
+ * Args:
+ *   deckId: The open deck's id, read whenever a URL is built, since a live
+ *     rename changes it.
+ */
+export function createAgentPanelApi(deckId: () => string): AgentPanelBrowserApi {
   const participantId = browserParticipantId();
   const listeners = new Set<(state: AgentPanelState) => void>();
   const deckUrl = (path: string): string => {
     const url = new URL(path, location.origin);
-    url.searchParams.set('deck', deckId);
+    url.searchParams.set('deck', deckId());
     url.searchParams.set('participant', participantId);
     return url.href;
   };
@@ -23,17 +31,25 @@ export function createAgentPanelApi(deckId: string): AgentPanelBrowserApi {
     if (!response.ok) throw new Error(value?.error ?? `Agent panel request failed (${response.status})`);
     return value as T;
   };
-  const events = new EventSource(deckUrl('/api/agent-panel/events'));
-  events.onmessage = (event) => {
-    const state = JSON.parse(event.data) as AgentPanelState;
-    for (const listener of listeners) listener(state);
+  const open = (): EventSource => {
+    const source = new EventSource(deckUrl('/api/agent-panel/events'));
+    source.onmessage = (event) => {
+      const state = JSON.parse(event.data) as AgentPanelState;
+      for (const listener of listeners) listener(state);
+    };
+    return source;
   };
+  let events = open();
   return {
     api: {
       getState: () => request('/api/agent-panel/state'),
       onState: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
     },
     participantId,
+    reconnect: () => {
+      events.close();
+      events = open();
+    },
     close: () => events.close(),
   };
 }

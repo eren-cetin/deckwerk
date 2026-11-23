@@ -88,11 +88,13 @@ window.addEventListener('keydown', (event) => {
 }, true);
 
 const params = new URLSearchParams(location.search);
-const deckId = params.get('deck');
-if (!deckId) {
+const initialDeckId = params.get('deck');
+if (!initialDeckId) {
   document.body.textContent = 'Missing ?deck= parameter.';
   throw new Error('missing deck');
 }
+/** The deck's id; a rename while presenting moves it (see onRenamed below). */
+let deckId: string = initialDeckId;
 const startSlide = Math.max(0, Number(params.get('slide') ?? '1') - 1);
 /**
  * Inclusive last slide, 1-based in the URL like `slide`. Present honours a
@@ -113,7 +115,7 @@ let role: PresentationRole = params.get('role') === 'speaker' ? 'speaker' : 'aud
 // An agent viewer is a passive screenshot surface, never half of a presenter's
 // two-window setup; giving it a bus would let it answer a real presenter's
 // hello with its own state.
-const bus = agentViewer ? null : createPresentationBus(deckId);
+const bus = agentViewer ? null : createPresentationBus(params.get('channel') ?? deckId);
 
 const stageHost = document.getElementById('stage')!;
 const speakerHost = document.getElementById('speaker')!;
@@ -175,7 +177,7 @@ const readiness = new PlayerPaintReadiness({
 readiness.connecting();
 
 function resolveSrc(src: string): string {
-  return `/decks/${encodeURIComponent(deckId!)}/`
+  return `/decks/${encodeURIComponent(deckId)}/`
     + src.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
 }
 
@@ -473,7 +475,9 @@ const connectionNotice = createConnectionNotice({
   blocking: () => deck === null,
 });
 
-const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?deck=${encodeURIComponent(deckId)}`;
+const wsUrlFor = (deck: string): string =>
+  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?deck=${encodeURIComponent(deck)}`;
+const wsUrl = wsUrlFor(deckId);
 const name = localStorage.getItem('collab-name');
 // The peer label is fixed at connect time; the window title is not, because
 // the roles can trade places later.
@@ -499,6 +503,17 @@ const bridge = new CollabBridge(wsUrl, name ? `${name} (${label.toLowerCase()})`
     else connectionNotice.showDisconnected();
   },
   onEnded: () => connectionNotice.showEnded('The host ended this presentation.'),
+  // Renamed mid-show: the session carries on; only the id in this window's
+  // URL, its asset links and its reconnects move. Slides already on screen
+  // keep the URLs they loaded with, which the server still answers.
+  onRenamed: ({ deckId: next }) => {
+    if (next === deckId) return;
+    deckId = next;
+    const query = new URLSearchParams(location.search);
+    query.set('deck', next);
+    history.replaceState(history.state, '', `${location.pathname}?${query.toString()}${location.hash}`);
+    bridge.setUrl(wsUrlFor(next));
+  },
 });
 
 window.addEventListener('resize', () => speaker?.refresh());

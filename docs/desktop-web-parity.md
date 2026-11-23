@@ -66,6 +66,15 @@ are intentionally omitted.
   document and relies on the browser's print dialog. Add a one-click generated
   PDF download where the deployment has a rendering service; retain print as
   the no-Chromium server fallback.
+- [x] **P1 — Rename the open deck.** The deck folder's menu in the toolbar
+  offers **Rename…** with the desktop's own dialog
+  (`src/renderer/editor/renameDialog.ts`), to anyone the server lets rename
+  it: everyone without `--access`, otherwise the deck's owner or the admin;
+  the deck picker's Rename… uses the same dialog. Unlike the desktop, other
+  people may have the deck open: the server moves the live session with the
+  folder, and every editor tab, Present window and agent bridge follows the
+  deck to its new id without reloading, keeping undo. The old id redirects
+  until the server restarts (see `docs/collab.md`, Renaming an open deck).
 - [ ] **P2 — Folder-style Open and Save As.** Desktop can open a deck folder
   and save a copy as another folder. The browser can open server decks and
   download a ZIP. Add a File System Access implementation where supported and
@@ -106,3 +115,7 @@ parity backlog.
 | Template routes, live-session save, hosted and `--access` rules | `test/collabTemplates.test.ts` |
 | Templates in the browser: apply seen by a peer, undo, save, new deck | `test/collabTemplatesBrowser.test.ts` |
 | Browsing the template list leaves the deck alone (fuzz op) | `test/crossContextFuzzBrowser.test.ts` |
+| Session folder move: mid-move edits, a save already running, re-armed watchers | `test/collabSession.test.ts` |
+| Live rename route: peers follow, old-id redirects, 409s, `--access` rules | `test/collabFolders.test.ts`, `test/collabAccess.test.ts` |
+| Rename in the browser: two editor tabs and a Present window follow, undo, edit after | `test/collabDeckRenameBrowser.test.ts` |
+| Agent bridge follows a rename and keeps its mirror folder | `test/localAgentBridge.test.ts` |
