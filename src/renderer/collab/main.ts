@@ -852,6 +852,30 @@ function buildToolbar(): void {
       ),
     });
   }
+  // The desktop app's View menu; the shortcuts work here too, but without
+  // a menu bar nothing tells a browser user they exist.
+  const viewOptions = [
+    {
+      label: 'Show Grid',
+      shortcut: '⌘\'',
+      checked: () => canvas.isGridVisible(),
+      action: () => void canvas.toggleGrid(),
+    },
+    {
+      label: 'Show Slide List',
+      shortcut: '⌥⌘1',
+      checked: () => panels.isShown('rail'),
+      action: () => panels.toggle('rail'),
+    },
+    {
+      label: 'Show Sidebar',
+      shortcut: '⌥⌘2',
+      checked: () => panels.isShown('side'),
+      action: () => panels.toggle('side'),
+    },
+  ];
+  secondaryActions.append(createToolbarPicker('View', viewOptions, { deckOnly: true }));
+  compactSecondaryEntries.push({ label: 'View', options: viewOptions });
   if (compactSecondaryEntries.length > 0) {
     compactSecondary = createToolbarPicker('More', compactSecondaryEntries);
     compactSecondary.classList.add('toolbar-compact-secondary-action');

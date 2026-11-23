@@ -1,6 +1,10 @@
 export interface ToolbarPickerOption {
   label: string;
   action: () => void;
+  /** Makes the entry a checkbox; read each time the menu opens. */
+  checked?: () => boolean;
+  /** Key hint shown dimmed at the right, e.g. "⌘'". */
+  shortcut?: string;
 }
 
 export interface ToolbarPickerSection {
@@ -83,7 +87,28 @@ export function createToolbarPicker(
       item.type = 'button';
       item.className = 'shape-menu-item';
       item.setAttribute('role', 'menuitem');
-      item.textContent = option.label;
+      if (option.checked || option.shortcut) {
+        if (option.checked) {
+          item.setAttribute('role', 'menuitemcheckbox');
+          item.setAttribute('aria-checked', String(option.checked()));
+          const check = document.createElement('span');
+          check.className = 'shape-menu-check';
+          check.setAttribute('aria-hidden', 'true');
+          check.textContent = '✓';
+          item.appendChild(check);
+        }
+        const text = document.createElement('span');
+        text.textContent = option.label;
+        item.appendChild(text);
+        if (option.shortcut) {
+          const hint = document.createElement('span');
+          hint.className = 'shape-menu-shortcut';
+          hint.textContent = option.shortcut;
+          item.appendChild(hint);
+        }
+      } else {
+        item.textContent = option.label;
+      }
       item.addEventListener('click', () => {
         close();
         trigger.blur();

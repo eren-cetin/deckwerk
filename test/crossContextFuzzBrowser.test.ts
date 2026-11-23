@@ -139,7 +139,7 @@ type OpName =
   | 'click' | 'shift-click' | 'double-click text' | 'double-click image then text'
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
-  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case' | 'image caption'
+  | 'cmd+a' | 'group toggle' | 'panel toggle' | 'view menu' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case' | 'image caption'
   | 'copy as image';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
@@ -392,6 +392,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.editing === null) add('theme apply', 1);
   add('grid toggle', 1);
   add('panel toggle', 1);
+  add('view menu', 1);
   add('path menu', 1);
   if (pre.editing === null && pre.selection.length === 0) add('arrow slide', 2);
   if (pre.editing === null) add('section fold', 3);
@@ -638,6 +639,49 @@ async function performOp(
       for (const [id, text] of Object.entries(after)) {
         if (texts[id] !== undefined && texts[id] !== text) {
           flag('routing', `toggling the grid changed ${id}: "${texts[id]}" -> "${text}"`);
+        }
+      }
+      return 'same';
+    }
+    case 'view menu': {
+      // View › Show Grid from the toolbar, wherever focus is: the checkmark
+      // tells the truth before and after, and no word on the slide changes.
+      const gridShown = () => session.cdp.evaluate<boolean>(
+        `Boolean(document.querySelector('#canvas .stage > .canvas-grid'))`);
+      const reachable = await session.cdp.evaluate<boolean>(`(() => {
+        const trigger = [...document.querySelectorAll('.toolbar-expanded-secondary-actions .shape-menu-trigger')]
+          .find((button) => button.textContent.trim() === 'View');
+        return Boolean(trigger) && trigger.getClientRects().length > 0;
+      })()`);
+      if (!reachable) return 'same';
+      const before = await gridShown();
+      const texts = await session.allTexts();
+      const openItem = async () => {
+        await session.cdp.evaluate(`([...document.querySelectorAll('.toolbar-expanded-secondary-actions .shape-menu-trigger')]
+          .find((button) => button.textContent.trim() === 'View').click(), true)`);
+        await wait(80);
+        return session.cdp.evaluate<string | null>(`[...document.querySelectorAll('.shape-menu [role=menuitemcheckbox]')]
+          .find((row) => row.textContent.includes('Show Grid'))?.getAttribute('aria-checked') ?? null`);
+      };
+      const checked = await openItem();
+      if (checked !== String(before)) flag('routing', `View › Show Grid read ${checked} with the grid ${before ? 'shown' : 'hidden'}`);
+      await session.cdp.evaluate(`([...document.querySelectorAll('.shape-menu [role=menuitemcheckbox]')]
+        .find((row) => row.textContent.includes('Show Grid'))?.click(), true)`);
+      await wait(80);
+      if ((await gridShown()) === before) flag('routing', 'View › Show Grid did not toggle the grid');
+      const after = await openItem();
+      if (after !== String(!before)) flag('routing', `View › Show Grid read ${after} after toggling`);
+      // Close it the way it opened; Escape would also end a text edit.
+      await session.cdp.evaluate(`([...document.querySelectorAll('.toolbar-expanded-secondary-actions .shape-menu-trigger')]
+        .find((button) => button.textContent.trim() === 'View').click(), true)`);
+      await wait(80);
+      if (await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('.shape-menu [role=menuitemcheckbox]'))`)) {
+        flag('routing', 'the View menu stayed open');
+      }
+      const textsAfter = await session.allTexts();
+      for (const [id, text] of Object.entries(textsAfter)) {
+        if (texts[id] !== undefined && texts[id] !== text) {
+          flag('routing', `View › Show Grid changed ${id}: "${texts[id]}" -> "${text}"`);
         }
       }
       return 'same';

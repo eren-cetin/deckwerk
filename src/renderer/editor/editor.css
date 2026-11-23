@@ -4081,6 +4081,10 @@ select.panel-action-select {
 .shape-menu-item:hover { background: var(--accent); color: #fff; border-color: transparent; }
 .shape-menu-item:hover svg { color: #fff; }
 .shape-menu-item svg { flex: none; color: var(--muted); }
+.shape-menu-check { flex: none; width: 12px; visibility: hidden; }
+.shape-menu-item[aria-checked="true"] .shape-menu-check { visibility: visible; }
+.shape-menu-shortcut { margin-left: auto; padding-left: 18px; color: var(--muted); font-size: 11px; }
+.shape-menu-item:hover .shape-menu-shortcut { color: #fff; }
 
 .table-picker-menu {
   min-width: 0;
