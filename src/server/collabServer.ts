@@ -2,7 +2,7 @@ import { renameRetiredFields } from '@shared/fieldAliases.js';
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { lookup } from 'node:dns/promises';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -134,6 +134,8 @@ interface Peer {
 
 /** One hosted deck: its authoritative session plus the peers editing it. */
 interface Room {
+  /** The deck id the room is filed under; changes when the deck is renamed live. */
+  id: string;
   session: CollabSession;
   peers: Map<string, Peer>;
   guestCounter: number;
@@ -346,6 +348,119 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
     canManageAccount: boolean;
     response: ServerResponse;
   }>();
+
+  /**
+   * Where a renamed deck went: old id → current id. Tabs, Present windows and
+   * agent bridges that missed the `renamed` message (or reconnect with the
+   * URL they started from) still find the deck. Only followed while nothing
+   * real exists at the old path, and kept in memory only, so it lasts until
+   * the server restarts.
+   */
+  const deckAliases = new Map<string, string>();
+  /**
+   * Renames under way, under both their old and new ids. Anything that names
+   * either id waits for the rename to finish before it looks the deck up, so
+   * nobody opens a second session on a folder that is moving.
+   */
+  const renamesInFlight = new Map<string, Promise<void>>();
+
+  function noteDeckAlias(fromId: string, toId: string): void {
+    deckAliases.delete(toId);
+    for (const [old, current] of deckAliases) {
+      if (current === fromId) deckAliases.set(old, toId);
+    }
+    deckAliases.set(fromId, toId);
+  }
+
+  function followDeckAlias(deckId: string): string {
+    const current = deckAliases.get(deckId);
+    if (current === undefined) return deckId;
+    try {
+      // A new deck made at the old name is that deck, not a redirect — unless
+      // the "new" deck is this one, found again through a case-insensitive
+      // disk after a rename that only changed case.
+      const oldDir = deckDirOf(deckId);
+      if (isDeckDir(oldDir) && !sameFolder(oldDir, deckDirOf(current))) return deckId;
+    } catch {
+      return deckId;
+    }
+    return current;
+  }
+
+  /** The id a request for `deckId` should use, once any rename touching it is done. */
+  async function settleDeckId(deckId: string): Promise<string> {
+    let id = deckId;
+    // Bounded: each pass waits out one rename, and renames are serialised per id.
+    for (let pass = 0; pass < 8; pass += 1) {
+      const pending = renamesInFlight.get(id);
+      if (pending) await pending;
+      const next = followDeckAlias(id);
+      if (!pending && next === id) return id;
+      id = next;
+    }
+    return id;
+  }
+
+  /**
+   * Carry the per-deck scraps a live rename should keep — drafts an agent is
+   * about to apply, idempotency records, open agent-panel streams — over to
+   * the deck's new id. Unlike a move of a closed deck, the same session and
+   * the same people carry on, so their work in progress still applies.
+   */
+  function rekeyDeckState(fromId: string, toId: string): void {
+    for (const draft of htmlDrafts.values()) {
+      if (draft.deckId === fromId) draft.deckId = toId;
+    }
+    const latest = latestHtmlDrafts.get(fromId);
+    latestHtmlDrafts.delete(fromId);
+    if (latest !== undefined) latestHtmlDrafts.set(toId, latest);
+    for (const draft of nativeDrafts.values()) {
+      if (draft.deckId === fromId) draft.deckId = toId;
+    }
+    for (const [key, value] of [...nativeIdempotency]) {
+      if (!key.startsWith(`${fromId}:`)) continue;
+      nativeIdempotency.delete(key);
+      nativeIdempotency.set(`${toId}:${key.slice(fromId.length + 1)}`, value);
+    }
+    for (const stream of sharedAgentStreams) {
+      if (stream.deckId === fromId) stream.deckId = toId;
+    }
+  }
+
+  /**
+   * Rename a deck that people have open, without closing it on them.
+   *
+   * The session moves its folder (edits keep applying in memory meanwhile and
+   * are written to the new folder), the room and everything keyed by the id
+   * follow, and the old id becomes a redirect. Peers then see the title change
+   * as an ordinary transaction, followed by `renamed`, which moves their URLs.
+   */
+  async function renameLiveRoom(room: Room, fromId: string, toId: string, title: string): Promise<void> {
+    if (toId !== fromId) {
+      const fromDir = deckDirOf(fromId);
+      const toDir = deckDirOf(toId);
+      await room.session.relocate(toDir, (from, to) => rename(from, to));
+      rooms.delete(fromId);
+      room.id = toId;
+      rooms.set(toId, room);
+      rekeyDeckState(fromId, toId);
+      localAgents?.relocate(fromDir, toDir);
+      noteDeckAlias(fromId, toId);
+    }
+    if (room.session.deck.title !== title) {
+      const ops: AgentOperation[] = [{ op: 'updateDeck', title }];
+      const applied = room.session.applyOps(ops);
+      broadcast(room, {
+        kind: 'txn',
+        seq: applied.seq,
+        txnId: `rename-${randomUUID()}`,
+        byClientId: '',
+        label: 'Rename presentation',
+        ops,
+      });
+    }
+    broadcast(room, { kind: 'renamed', previousId: fromId, deckId: toId, title });
+  }
 
   /**
    * Deck ids are folder paths under the root — "talk", or "clients/acme/talk"
@@ -604,7 +719,10 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
     return role === 'owner' || role === 'edit';
   }
 
-  async function getRoom(deckId: string): Promise<Room> {
+  async function getRoom(requestedId: string): Promise<Room> {
+    // A caller that looked its id up just before a rename began must not open
+    // a second session on the folder's old (or new) path.
+    const deckId = await settleDeckId(requestedId);
     const existing = rooms.get(deckId);
     if (existing) return existing;
     // A page opens its WebSocket and its agent-state stream at the same
@@ -622,7 +740,7 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
   async function openRoom(deckId: string): Promise<Room> {
     const session = await CollabSession.open(deckDirOf(deckId));
     const room: Room = {
-      session, peers: new Map(), guestCounter: 0, agentPresence: null, participantLogins: new Map(),
+      id: deckId, session, peers: new Map(), guestCounter: 0, agentPresence: null, participantLogins: new Map(),
     };
     session.watch({
       onExternalDeck: (deck, seq) => broadcast(room, {
@@ -896,7 +1014,17 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
   async function handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const path = decodeURIComponent(url.pathname);
-    const deckParam = url.searchParams.get('deck');
+    const requestedDeck = url.searchParams.get('deck');
+    // A second rename of a deck already being renamed is refused, not queued
+    // behind the first: queued, it would rename whatever the first produced.
+    if (path === '/api/decks/rename' && requestedDeck && renamesInFlight.has(requestedDeck)) {
+      return respondJson(response, 409, { error: 'this presentation is being renamed right now' });
+    }
+    // Every ?deck= route sees the deck's current id: one renamed while this
+    // tab, window or bridge had it open is still found under its old one.
+    const deckParam = requestedDeck && splitDeckPath(requestedDeck)
+      ? await settleDeckId(requestedDeck)
+      : requestedDeck;
     const agentSessionParam = normalizeSharedParticipantId(url.searchParams.get('agentSession'));
 
     if (path.startsWith('/api/agent-mirror/') && request.headers[BRIDGE_HEADER] !== '1') {
@@ -967,6 +1095,8 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
     // marker is what separates it from the file being served.
     const assetMatch = /^\/decks\/(.+)\/(assets\/.+)$/.exec(path);
     if (assetMatch) {
+      // Pictures already on screen keep the URL they loaded with.
+      if (splitDeckPath(assetMatch[1])) assetMatch[1] = await settleDeckId(assetMatch[1]);
       if (!(await deckAllowed(identity, assetMatch[1]))) {
         response.writeHead(403, { 'content-type': 'text/plain' });
         response.end('forbidden');
@@ -1492,14 +1622,42 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
       } catch {
         return respondJson(response, 400, { error: 'missing or invalid name' });
       }
-      if (id !== deckParam && existsSync(to)) {
+      // Checked and claimed with nothing awaited in between, so two renames
+      // racing for one deck (or for one new name) cannot both proceed.
+      if (renamesInFlight.has(deckParam) || renamesInFlight.has(id)) {
+        return respondJson(response, 409, { error: 'this presentation is being renamed right now' });
+      }
+      // "talk" → "Talk" on a case-insensitive disk finds the deck itself.
+      const caseOnly = id.toLowerCase() === deckParam.toLowerCase();
+      if (id !== deckParam && !caseOnly && existsSync(to)) {
         return respondJson(response, 409, { error: `"${id}" already exists` });
       }
-      // Even a title-only change rewrites deck.json underneath a live
-      // session, so it waits for the room to empty just as a move does.
-      const busy = await relocateDeck(deckParam, id, 'renaming');
-      if (busy) return respondJson(response, busy.status, { error: busy.error });
-      await saveDeck(to, { ...await loadDeck(to), title: name });
+      let finish!: () => void;
+      const done = new Promise<void>((resolveDone) => { finish = resolveDone; });
+      renamesInFlight.set(deckParam, done);
+      renamesInFlight.set(id, done);
+      try {
+        await roomsOpening.get(deckParam)?.catch(() => undefined);
+        const room = rooms.get(deckParam);
+        if (room) {
+          // Open somewhere: the session moves with its folder and everyone
+          // in the room follows, so nobody has to close anything first.
+          await renameLiveRoom(room, deckParam, id, name);
+        } else {
+          const busy = await relocateDeck(deckParam, id, 'renaming');
+          if (busy) return respondJson(response, busy.status, { error: busy.error });
+          await saveDeck(to, { ...await loadDeck(to), title: name });
+          if (id !== deckParam) noteDeckAlias(deckParam, id);
+        }
+      } catch (error) {
+        return respondJson(response, 500, {
+          error: `could not rename the presentation: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      } finally {
+        renamesInFlight.delete(deckParam);
+        renamesInFlight.delete(id);
+        finish();
+      }
       respondJson(response, 200, { id, title: name });
       return;
     }
@@ -2801,8 +2959,8 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
 
   wss.on('connection', (socket, request) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
-    const deckId = url.searchParams.get('deck');
-    if (!deckId) {
+    const requestedId = url.searchParams.get('deck');
+    if (!requestedId) {
       socket.close(4000, 'missing deck parameter');
       return;
     }
@@ -2811,6 +2969,7 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
     // immediately after the handshake isn't emitted before a listener exists.
     socket.pause();
     void (async () => {
+      const deckId = splitDeckPath(requestedId) ? await settleDeckId(requestedId) : requestedId;
       // The upgrade request carries the same loopback socket and tailscale
       // serve headers as any HTTP request, so the identity rules match.
       let identity: Identity | null = null;
@@ -2835,12 +2994,18 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
         socket.close(4004, String(error instanceof Error ? error.message : error).slice(0, 120));
         return;
       }
-      bindPeer(room, socket, identity, canEdit);
+      bindPeer(room, socket, identity, canEdit, requestedId);
       socket.resume();
     })();
   });
 
-  function bindPeer(room: Room, socket: WebSocket, identity: Identity | null, canEdit: boolean): void {
+  function bindPeer(
+    room: Room,
+    socket: WebSocket,
+    identity: Identity | null,
+    canEdit: boolean,
+    requestedId: string,
+  ): void {
     const clientId = randomUUID();
     const peer: Peer = {
       socket,
@@ -2920,6 +3085,11 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
             ...(room.agentPresence ? [room.agentPresence] : []),
           ],
         });
+        // Joined under an id the deck has since left (a stale tab, or a
+        // reconnect from before a rename): tell it where the deck is now.
+        if (requestedId !== room.id) {
+          send(peer, { kind: 'renamed', previousId: requestedId, deckId: room.id, title: room.session.deck.title });
+        }
         broadcast(room, { kind: 'presence', state: peer.state }, clientId);
         return;
       }
@@ -3545,6 +3715,17 @@ function redirectToViewer(response: ServerResponse, url: URL): void {
   if (!viewer.searchParams.has('slide')) viewer.searchParams.set('slide', '1');
   response.writeHead(302, { location: `${viewer.pathname}${viewer.search}` });
   response.end();
+}
+
+/** Whether two paths name the same folder on disk (case-insensitive disks). */
+function sameFolder(a: string, b: string): boolean {
+  try {
+    const first = statSync(a);
+    const second = statSync(b);
+    return first.ino === second.ino && first.dev === second.dev;
+  } catch {
+    return false;
+  }
 }
 
 function sanitizeDeckId(name: string): string {

@@ -118,10 +118,39 @@ that path as the id.
   is refused while anyone has the deck open.
 - `POST /api/decks/rename?deck=<id>&name=<name>` renames a deck: the last
   segment of its id and the title the picker shows are the same name, so both
-  change together. Like a move it waits for the room to be empty.
+  change together. Unlike a move it works while people have the deck open
+  (see **Renaming an open deck** below). A second rename of the same deck
+  while one is running, or a name that is already taken, gets 409.
 - `POST /api/folders/rename?path=<path>&name=<name>` renames a folder in
   place. Every deck inside is filed under that path, so all of their ids
   change at once and none of them may be open.
+
+#### Renaming an open deck
+
+The room is not closed for a rename. The session waits for any save already
+running, writes what it still owes to the old folder, moves the folder and
+carries on in the new one; transactions that arrive meanwhile apply in memory
+as usual and are written to the new folder once it is there, never to the
+old path. The room, the HTML/native drafts and idempotency records, the
+agent-panel streams and each participant's local-agent state are re-keyed to
+the new id, so an agent half-way through a draft can still apply it. With
+`--access` the `access.json` sidecar moves with the folder, so sharing is
+unchanged, and only the deck's owner or the admin may rename it.
+
+Peers then see the title change as an ordinary `txn` (from `byClientId: ''`),
+followed by a `renamed {previousId, deckId, title}` message telling them the
+deck's new id. Editor tabs, Present windows and agent bridges switch their
+URLs to it; nothing reloads, and undo survives. The protocol version is
+unchanged: an older client drops the unknown message and keeps working
+through the redirect below.
+
+The old id keeps working as a redirect — `?deck=` routes, `/decks/<id>/assets/`
+and the WebSocket — for as long as no real deck exists at the old path. A
+socket that joins under the old id gets `renamed` straight after its welcome.
+Requests that arrive while the folder is moving wait for the move to finish.
+The redirects live in memory only: after a server restart, a stale tab or an
+older bridge still holding the old id fails to reconnect and has to be pointed
+at the new name.
 
 The picker browses the tree with a breadcrumb; New, Import and New folder all
 act in the folder you are looking at. Each row a person manages carries

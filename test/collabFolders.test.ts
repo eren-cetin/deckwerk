@@ -8,7 +8,7 @@
  * Deck ids are folder paths ("clients/acme/pitch"), so this suite also pins
  * down that a nested id survives every route that takes one.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -205,19 +205,99 @@ describe('collab server folders', () => {
       expect((await api('/api/decks/rename?deck=nope&name=x', { method: 'POST' })).status).toBe(404);
     });
 
-    it('refuses to rename a presentation somebody has open', async () => {
-      const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws?deck=loose`);
+    /** A peer in a deck's room, with every message the server sent it. */
+    const joinRoom = async (deckId: string) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws?deck=${encodeURIComponent(deckId)}`);
+      const messages: any[] = [];
+      socket.on('message', (raw) => messages.push(JSON.parse(String(raw))));
       await new Promise<void>((done, fail) => {
         socket.on('open', () => socket.send(JSON.stringify({ kind: 'hello', version: COLLAB_PROTOCOL_VERSION })));
         socket.on('message', () => done());
         socket.on('error', fail);
         setTimeout(() => fail(new Error('ws timed out')), 4000);
       });
-      const refused = await api('/api/decks/rename?deck=loose&name=other', { method: 'POST' });
-      expect(refused.status).toBe(409);
-      expect(refused.body.error).toMatch(/open/);
-      expect(existsSync(join(rootDir, 'loose', 'deck.json'))).toBe(true);
-      socket.terminate();
+      return { socket, messages };
+    };
+
+    it('renames a presentation somebody has open, and the room follows it', async () => {
+      const peer = await joinRoom('loose');
+      // An edit sent just before the rename: applied, but its save not due yet.
+      peer.socket.send(JSON.stringify({
+        kind: 'txn', txnId: 'edit-1', baseSeq: 0, label: 'Add', ops: [
+          { op: 'insertSlides', afterSlideId: 's1', slides: [{ id: 's2', name: 'Two' }] },
+        ],
+      }));
+      await vi.waitFor(() => expect(peer.messages.some((m) => m.txnId === 'edit-1')).toBe(true));
+      const renamed = await api('/api/decks/rename?deck=loose&name=Big%20Talk', { method: 'POST' });
+      expect(renamed.status).toBe(200);
+      expect(renamed.body).toEqual({ id: 'Big Talk', title: 'Big Talk' });
+
+      // The peer sees the title change as an ordinary transaction, then where
+      // the deck went.
+      await vi.waitFor(() => expect(peer.messages.some((m) => m.kind === 'renamed')).toBe(true));
+      const tail = peer.messages.slice(peer.messages.findIndex((m) => m.txnId === 'edit-1') + 1);
+      expect(tail.map((m) => m.kind)).toEqual(['txn', 'renamed']);
+      expect(tail[0]).toMatchObject({ byClientId: '', ops: [{ op: 'updateDeck', title: 'Big Talk' }] });
+      expect(tail[1]).toEqual({ kind: 'renamed', previousId: 'loose', deckId: 'Big Talk', title: 'Big Talk' });
+
+      // The same room carries on under the new id, edits included.
+      peer.socket.send(JSON.stringify({
+        kind: 'txn', txnId: 'edit-2', baseSeq: 0, label: 'Add', ops: [
+          { op: 'insertSlides', afterSlideId: 's2', slides: [{ id: 's3', name: 'Three' }] },
+        ],
+      }));
+      await vi.waitFor(() => expect(peer.messages.some((m) => m.txnId === 'edit-2')).toBe(true));
+      expect((await api('/api/decks')).body).toContainEqual(expect.objectContaining({ id: 'Big Talk', editors: 1 }));
+      await server.flush();
+      const saved = JSON.parse(await readFile(join(rootDir, 'Big Talk', 'deck.json'), 'utf8'));
+      expect(saved.title).toBe('Big Talk');
+      expect(saved.slides.map((slide: { id: string }) => slide.id)).toEqual(['s1', 's2', 's3']);
+      expect(existsSync(join(rootDir, 'loose'))).toBe(false);
+      peer.socket.terminate();
+    });
+
+    it('still finds a renamed deck under its old id until a new deck takes the name', async () => {
+      await mkdir(join(rootDir, 'loose', 'assets'), { recursive: true });
+      await writeFile(join(rootDir, 'loose', 'assets', 'logo.txt'), 'hello', 'utf8');
+      const peer = await joinRoom('loose');
+      expect((await api('/api/decks/rename?deck=loose&name=Big%20Talk', { method: 'POST' })).status).toBe(200);
+
+      // HTTP, assets and a reconnecting socket that still use the old id.
+      expect((await api('/api/deck?deck=loose')).body.title).toBe('Big Talk');
+      expect(await (await fetch(`${base}/decks/loose/assets/logo.txt`)).text()).toBe('hello');
+      const stale = await joinRoom('loose');
+      await vi.waitFor(() => expect(stale.messages.map((m) => m.kind)).toContain('renamed'));
+      expect(stale.messages[0]).toMatchObject({ kind: 'welcome', deck: { title: 'Big Talk' } });
+      expect(stale.messages.find((m) => m.kind === 'renamed'))
+        .toEqual({ kind: 'renamed', previousId: 'loose', deckId: 'Big Talk', title: 'Big Talk' });
+      expect((await api('/api/decks')).body).toContainEqual(expect.objectContaining({ id: 'Big Talk', editors: 2 }));
+
+      // A deck made under the old name is that deck from then on.
+      expect((await api('/api/decks?name=loose', { method: 'POST' })).status).toBe(200);
+      const fresh = await api('/api/deck?deck=loose');
+      expect(fresh.body.title).not.toBe('Big Talk');
+      expect((await fetch(`${base}/decks/loose/assets/logo.txt`)).status).not.toBe(200);
+      peer.socket.terminate();
+      stale.socket.terminate();
+    });
+
+    it('refuses a second rename while the first is under way, and a name already taken', async () => {
+      const peer = await joinRoom('loose');
+      const [first, second] = await Promise.all([
+        api('/api/decks/rename?deck=loose&name=one', { method: 'POST' }),
+        api('/api/decks/rename?deck=loose&name=two', { method: 'POST' }),
+      ]);
+      expect([first.status, second.status].sort()).toEqual([200, 409]);
+      const winner = first.status === 200 ? 'one' : 'two';
+      expect(existsSync(join(rootDir, winner, 'deck.json'))).toBe(true);
+      expect(existsSync(join(rootDir, winner === 'one' ? 'two' : 'one'))).toBe(false);
+
+      await seedDeck('taken');
+      const clash = await api(`/api/decks/rename?deck=${winner}&name=taken`, { method: 'POST' });
+      expect(clash.status).toBe(409);
+      expect(JSON.parse(await readFile(join(rootDir, 'taken', 'deck.json'), 'utf8')).title).toBe('taken');
+      expect(existsSync(join(rootDir, winner, 'deck.json'))).toBe(true);
+      peer.socket.terminate();
     });
 
     it('renames a folder, taking every presentation in it along', async () => {

@@ -171,6 +171,21 @@ export const ServerEndedSchema = z.object({
   kind: z.literal('ended'),
 });
 
+/**
+ * The deck's folder was renamed while this peer had it open. The room, its
+ * history and this connection carry on unchanged; only the id the client uses
+ * in URLs moves. Sent after the title change as an ordinary `txn`, and again
+ * to a peer that joins under an id the deck has since left. Clients that
+ * predate it drop it as an unknown kind and keep working through the
+ * server's old-id redirect.
+ */
+export const ServerRenamedSchema = z.object({
+  kind: z.literal('renamed'),
+  previousId: z.string(),
+  deckId: z.string(),
+  title: z.string(),
+});
+
 export const ServerMessageSchema = z.discriminatedUnion('kind', [
   ServerWelcomeSchema,
   ServerTxnSchema,
@@ -180,8 +195,10 @@ export const ServerMessageSchema = z.discriminatedUnion('kind', [
   ServerPeerLeftSchema,
   ServerThemeSchema,
   ServerEndedSchema,
+  ServerRenamedSchema,
 ]);
 
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
 export type ServerTxnMessage = z.infer<typeof ServerTxnSchema>;
 export type ServerWelcomeMessage = z.infer<typeof ServerWelcomeSchema>;
+export type ServerRenamedMessage = z.infer<typeof ServerRenamedSchema>;

@@ -39,14 +39,29 @@ export class CollabSession {
   private lastSavedJson: string | null = null;
   private lastSavedTheme: string | null = null;
   private watchers: FSWatcher[] = [];
+  private deckTimer: NodeJS.Timeout | null = null;
+  private themeTimer: NodeJS.Timeout | null = null;
   private events: CollabSessionEvents | null = null;
+  /** Writes that have started against the folder and not yet finished. */
+  private readonly writes = new Set<Promise<void>>();
+  /**
+   * Held while the folder is being moved. Every write waits on it, so nothing
+   * lands in the old folder after it has been flushed, or in a folder that is
+   * half-way through a rename.
+   */
+  private gate: Promise<void> | null = null;
 
   private constructor(
-    readonly dir: string,
+    private folder: string,
     public deck: Deck,
     public themeCss: string,
     public seq = 0,
   ) {}
+
+  /** The deck folder; changes only through `relocate`. */
+  get dir(): string {
+    return this.folder;
+  }
 
   static async open(dir: string): Promise<CollabSession> {
     const deck = await loadDeck(dir);
@@ -77,22 +92,29 @@ export class CollabSession {
   saveThemeCss(css: string): void {
     this.themeCss = css;
     this.lastSavedTheme = css;
-    void saveTheme(this.dir, this.deck.theme, css).catch((error) => {
-      console.error(`theme save failed: ${String(error)}`);
-    });
+    void this.write(async () => {
+      // The newest stylesheet, not this call's: a write held back by a move
+      // must not land after a later one with older contents.
+      this.lastSavedTheme = this.themeCss;
+      await saveTheme(this.dir, this.deck.theme, this.themeCss);
+    }, 'theme');
   }
 
   watch(events: CollabSessionEvents): void {
     this.events = events;
-    let deckTimer: NodeJS.Timeout | null = null;
-    let themeTimer: NodeJS.Timeout | null = null;
     const onDeck = (): void => {
-      if (deckTimer) clearTimeout(deckTimer);
-      deckTimer = setTimeout(() => void this.reloadDeckFromDisk(), WATCH_DEBOUNCE_MS);
+      if (this.deckTimer) clearTimeout(this.deckTimer);
+      this.deckTimer = setTimeout(() => {
+        this.deckTimer = null;
+        void this.reloadDeckFromDisk();
+      }, WATCH_DEBOUNCE_MS);
     };
     const onTheme = (): void => {
-      if (themeTimer) clearTimeout(themeTimer);
-      themeTimer = setTimeout(() => void this.reloadThemeFromDisk(), WATCH_DEBOUNCE_MS);
+      if (this.themeTimer) clearTimeout(this.themeTimer);
+      this.themeTimer = setTimeout(() => {
+        this.themeTimer = null;
+        void this.reloadThemeFromDisk();
+      }, WATCH_DEBOUNCE_MS);
     };
     // The folder rather than the files: deck.json is replaced by rename on
     // every save (ours and any careful external writer's), and a watch bound
@@ -109,18 +131,83 @@ export class CollabSession {
     );
   }
 
+  /** Write a scheduled save now, and wait for every write already running. */
   async flush(): Promise<void> {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
       await this.persist();
     }
+    while (this.gate || this.writes.size > 0) {
+      await (this.gate ?? Promise.allSettled([...this.writes]));
+    }
   }
 
   async close(): Promise<void> {
+    this.stopWatching();
+    await this.flush();
+  }
+
+  /**
+   * Move the deck folder to `toDir` while the session stays live.
+   *
+   * Edits keep applying in memory throughout; only their writes wait. The
+   * folder is brought up to date first, so what moves is the document as it
+   * stands, and anything that arrives during the move is written to the new
+   * folder once it is there — never back into the old one, which would
+   * recreate it.
+   *
+   * Args:
+   *   toDir: The folder's new absolute path.
+   *   move: Moves the folder; given the old and new paths.
+   *
+   * Raises:
+   *   Error: If a move is already under way, or `move` fails. On failure the
+   *     session carries on at its old folder.
+   */
+  async relocate(toDir: string, move: (fromDir: string, toDir: string) => Promise<void>): Promise<void> {
+    if (this.gate) throw new Error('the deck folder is already being moved');
+    let release!: () => void;
+    this.gate = new Promise<void>((resolve) => { release = resolve; });
+    // The old folder's watchers would report the move as the deck vanishing.
+    this.stopWatching();
+    try {
+      // A save that started before the gate goes to the old folder; let it
+      // finish there, then write whatever was still only scheduled.
+      await Promise.allSettled([...this.writes]);
+      if (this.saveTimer) {
+        clearTimeout(this.saveTimer);
+        this.saveTimer = null;
+        try {
+          await this.track(this.saveDeckNow());
+        } catch (error) {
+          // Memory is still ahead of disk; keep the save owed.
+          this.schedulePersist();
+          throw error;
+        }
+      }
+      await move(this.folder, toDir);
+      this.folder = toDir;
+    } finally {
+      this.gate = null;
+      release();
+      if (this.events) {
+        try {
+          this.watch(this.events);
+        } catch (error) {
+          console.error(`could not watch ${this.folder}: ${String(error)}`);
+        }
+      }
+    }
+  }
+
+  private stopWatching(): void {
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
-    await this.flush();
+    if (this.deckTimer) clearTimeout(this.deckTimer);
+    if (this.themeTimer) clearTimeout(this.themeTimer);
+    this.deckTimer = null;
+    this.themeTimer = null;
   }
 
   private schedulePersist(): void {
@@ -131,15 +218,39 @@ export class CollabSession {
     }, SAVE_DEBOUNCE_MS);
   }
 
-  private async persist(): Promise<void> {
+  private persist(): Promise<void> {
+    return this.write(() => this.saveDeckNow(), 'deck');
+  }
+
+  private async saveDeckNow(): Promise<void> {
+    this.lastSavedJson = await saveDeck(this.dir, this.deck);
+  }
+
+  /**
+   * Run a write against the folder once no move is under way. Nothing
+   * awaits between the gate opening and the write starting, so a move that
+   * begins later always sees this write in `writes`.
+   */
+  private async write(action: () => Promise<void>, what: 'deck' | 'theme'): Promise<void> {
+    while (this.gate) await this.gate;
     try {
-      this.lastSavedJson = await saveDeck(this.dir, this.deck);
+      await this.track(action());
     } catch (error) {
-      console.error(`deck save failed: ${String(error)}`);
+      console.error(`${what} save failed: ${String(error)}`);
+    }
+  }
+
+  private async track(write: Promise<void>): Promise<void> {
+    this.writes.add(write);
+    try {
+      await write;
+    } finally {
+      this.writes.delete(write);
     }
   }
 
   private async reloadDeckFromDisk(): Promise<void> {
+    if (this.gate) return;
     try {
       const { readFile } = await import('node:fs/promises');
       const raw = await readFile(join(this.dir, 'deck.json'), 'utf8');
@@ -166,6 +277,7 @@ export class CollabSession {
   }
 
   private async reloadThemeFromDisk(): Promise<void> {
+    if (this.gate) return;
     try {
       const css = await loadTheme(this.dir, this.deck.theme);
       if (css === this.lastSavedTheme) return;

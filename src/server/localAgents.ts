@@ -91,6 +91,24 @@ export class LocalAgentRegistry {
     return this.linked(deckPath, participantId) ? `local-agent:${participantId}` : null;
   }
 
+  /**
+   * Carry every participant's agent state over to a deck folder's new path
+   * after a live rename, so a bridge that reconnects or reports activity finds
+   * its history where it left it.
+   */
+  relocate(fromPath: string, toPath: string): void {
+    const prefix = key(fromPath, '');
+    const moved: string[] = [];
+    for (const [k, agent] of [...this.agents]) {
+      if (!k.startsWith(prefix)) continue;
+      const participantId = k.slice(prefix.length);
+      this.agents.delete(k);
+      this.agents.set(key(toPath, participantId), agent);
+      moved.push(participantId);
+    }
+    for (const participantId of moved) this.emit(toPath, participantId);
+  }
+
   subscribe(listener: (state: AgentPanelState, participantId: string) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

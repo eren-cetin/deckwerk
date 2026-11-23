@@ -305,6 +305,40 @@ describe('collab server access control', () => {
     // And Bob cannot simply reconnect.
     expect((await wsResult('alices-shared', asUser(BOB))).closed?.code).toBe(4003);
   });
+
+  it('lets only the owner rename a deck people have open, and its sharing moves with it', async () => {
+    const messages: any[] = [];
+    const bob = new WebSocket(`ws://127.0.0.1:${server.port}/ws?deck=alices-shared`, { headers: asUser(BOB) });
+    sockets.push(bob);
+    bob.on('open', () => bob.send(JSON.stringify({ kind: 'hello', version: COLLAB_PROTOCOL_VERSION })));
+    bob.on('message', (raw) => messages.push(JSON.parse(String(raw))));
+    await vi.waitFor(() => expect(messages[0]?.kind).toBe('welcome'));
+
+    // Bob may edit it, but renaming is the owner's (or the admin's) call.
+    const refused = await api('/api/decks/rename?deck=alices-shared&name=bobs', {
+      method: 'POST', headers: asUser(BOB),
+    });
+    expect(refused.status).toBe(403);
+    expect(existsSync(join(rootDir, 'alices-shared', 'deck.json'))).toBe(true);
+
+    const renamed = await api('/api/decks/rename?deck=alices-shared&name=Plan%20B', {
+      method: 'POST', headers: asUser(ALICE),
+    });
+    expect(renamed.status).toBe(200);
+    await vi.waitFor(() => expect(messages.map((m) => m.kind)).toContain('renamed'));
+    expect(bob.readyState).toBe(WebSocket.OPEN);
+
+    // The sidecar travelled with the folder: Bob is still in, Carol still out,
+    // under the new id and through the old one alike.
+    expect(await readDeckAccess(join(rootDir, 'Plan B'), { admin: ADMIN }))
+      .toMatchObject({ owner: ALICE, visibility: 'private' });
+    expect((await api('/api/deck?deck=Plan%20B', { headers: asUser(BOB) })).status).toBe(200);
+    expect((await api('/api/deck?deck=alices-shared', { headers: asUser(BOB) })).status).toBe(200);
+    const CAROL = 'carol@tailnet.example';
+    expect((await api('/api/deck?deck=Plan%20B', { headers: asUser(CAROL) })).status).toBe(403);
+    expect((await api('/api/deck?deck=alices-shared', { headers: asUser(CAROL) })).status).toBe(403);
+    expect((await wsResult('alices-shared', asUser(CAROL))).closed?.code).toBe(4003);
+  });
 });
 
 describe('collab server view-only access', () => {
