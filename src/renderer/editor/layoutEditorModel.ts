@@ -18,7 +18,6 @@ import {
   type FixedLayout,
   type SlotKind,
 } from '@shared/layoutMasters.js';
-import { ROLE_TYPE_SCALE_PROPERTIES } from '@shared/themes.js';
 
 // Installing layouts needs no DOM; it lives with the layout model.
 export { installLayouts } from '@shared/layoutMasters.js';
@@ -192,19 +191,12 @@ export function tileBodyPlaceholders(elements: SlideElement[], canvas: { w: numb
   });
 }
 
-/** A master's elements as the deck stores them: no editor marks, no type scale, slot roles. */
+/** A master's elements as the deck stores them: no editor marks, slot roles. */
 function storedElements(elements: readonly SlideElement[]): SlideElement[] {
   const copy = structuredClone(elements) as SlideElement[];
   for (const element of copy) {
     delete element.layoutMasterId;
     element.class = element.class.filter((name) => name !== 'layout-master-element');
-    if (element.type === 'text') {
-      // Sizes are the deck's, not the layout's (see copyPlaceholderPresentation).
-      for (const property of ROLE_TYPE_SCALE_PROPERTIES) {
-        delete element.style[property];
-        if (element.contentStyle) delete element.contentStyle[property];
-      }
-    }
     if (element.type === 'text' && element.layoutPlaceholder) {
       element.class = [
         ...element.class.filter((name) => !name.startsWith('role-') && name !== 'placeholder'),

@@ -2108,7 +2108,9 @@ describe('the semantic role as formatting', () => {
     expect(text.style).toEqual({ color: '#ff0000' });
   });
 
-  it('shows but locks the size field while editing layout masters', () => {
+  // A layout's own size outranks the theme on its slides, so the field is
+  // typed into like any other; it used to be locked to the theme's size.
+  it('lets a size be typed on a placeholder while editing layout masters', () => {
     const { store, inspector, inspectorHost } = setup(
       [textElement('text-1', { class: ['role-title'], style: {}, html: 'Slide title' })],
       (deck) => {
@@ -2120,10 +2122,10 @@ describe('the semantic role as formatting', () => {
     store.select([]);
     store.select(['text-1']);
 
-    const sizeField = field(inspectorHost, 'Font size');
-    expect(sizeField.classList.contains('theme-owned')).toBe(true);
-    expect(sizeField.querySelector('input')!.disabled).toBe(true);
-    expect([...sizeField.querySelectorAll('button')].every((node) => node.disabled)).toBe(true);
+    const input = field(inspectorHost, 'Font size').querySelector('input')!;
+    expect(input.disabled).toBe(false);
+    type(input, '72');
+    expect(textOf(store, 'text-1').style['font-size']).toBe('72px');
   });
 
   it('restyles every box in a multi-selection', () => {

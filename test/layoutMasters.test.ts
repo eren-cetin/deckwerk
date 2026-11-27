@@ -5,6 +5,7 @@ import {
   layoutSlotOf,
   syncDeckWithLayoutMasters,
   syncSlideWithLayoutMaster,
+  installLayouts,
 } from '../src/shared/layoutMasters.js';
 import { diffDecks } from '../src/shared/deckDiff.js';
 import { applySlideLayout } from '../src/renderer/editor/slideLayouts.js';
@@ -222,20 +223,37 @@ describe('authored placeholder content and layout changes', () => {
    * A size that found its way onto a master placeholder used to stamp itself
    * onto every slide and take those boxes off the deck's scale for good.
    */
-  it('never carries a type scale from the master onto slides', () => {
+  it('carries the master\u2019s own type, size included, onto its slides', () => {
     const deck = authoredDeck();
     const master = deck.layoutMasters!.standard.elements[0];
     if (master.type !== 'text') throw new Error('the standard master starts with its title');
     master.style = { 'font-size': '64px', 'line-height': '1', 'letter-spacing': '0.1em', 'font-family': 'Georgia' };
     master.contentStyle = { 'font-size': '60px' };
 
+    const own = { 'font-size': '64px', 'line-height': '1', 'letter-spacing': '0.1em', 'font-family': 'Georgia' };
     syncDeckWithLayoutMasters(deck);
-    expect(slotOf(deck, 'title').style).toEqual({ 'font-family': 'Georgia' });
-    expect(slotOf(deck, 'title').contentStyle).toBeUndefined();
+    expect(slotOf(deck, 'title').style).toEqual(own);
+    expect(slotOf(deck, 'title').contentStyle).toEqual({ 'font-size': '60px' });
 
     applySlideLayout(deck.slides[0], 'standard', deck.layoutMasters);
-    expect(slotOf(deck, 'title').style).toEqual({ 'font-family': 'Georgia' });
-    expect(slotOf(deck, 'title').contentStyle).toBeUndefined();
+    expect(slotOf(deck, 'title').style).toEqual(own);
+  });
+
+  it('takes a size back off the slides when the layout stops setting it, but not one the slide changed', () => {
+    const deck = authoredDeck();
+    const sized = structuredClone(deck.layoutMasters!);
+    const title = sized.standard.elements[0];
+    if (title.type !== 'text') throw new Error('the standard master starts with its title');
+    title.style = { 'font-size': '64px', 'font-weight': '300' };
+    installLayouts(deck, sized, []);
+    expect(slotOf(deck, 'title').style).toEqual({ 'font-size': '64px', 'font-weight': '300' });
+
+    // The slide's own weight is the slide's; the layout's size is not.
+    slotOf(deck, 'title').style['font-weight'] = '800';
+    const plain = structuredClone(sized);
+    plain.standard.elements[0].style = {};
+    installLayouts(deck, plain, []);
+    expect(slotOf(deck, 'title').style).toEqual({ 'font-weight': '800' });
   });
 });
 

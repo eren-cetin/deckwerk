@@ -307,6 +307,28 @@ export class DesignWorkspace {
     const masterInspector = new Inspector(inspectorInner, masterStore);
     masterInspector.editsLayoutMasters = true;
     wireCanvasInspector(masterCanvas, masterInspector);
+    // A placeholder's words are prompt copy: every slide replaces them with
+    // its own text, so formatting applied to selected characters would show
+    // here and reach no slide. With the caret in a placeholder, a typography
+    // change therefore ends the edit and styles the whole box, which is what
+    // slides inherit. Other text on a layout keeps its own words on every
+    // slide, so there a selection is still styled as a selection.
+    const editingPlaceholder = (): boolean => masterCanvas.isEditing()
+      && masterStore.selectedElements().some((element) => (
+        element.type === 'text' && Boolean(element.layoutPlaceholder)
+      ));
+    const onWholePlaceholder = <A extends unknown[]>(
+      applyToSelection: ((...args: A) => boolean) | undefined,
+    ) => (...args: A): boolean => {
+      if (!editingPlaceholder()) return applyToSelection?.(...args) ?? false;
+
+      masterCanvas.endTextEditing();
+      return false;
+    };
+    masterInspector.onApplyTextSelectionWeight = onWholePlaceholder(masterInspector.onApplyTextSelectionWeight);
+    masterInspector.onApplyTextSelectionFontFamily = onWholePlaceholder(masterInspector.onApplyTextSelectionFontFamily);
+    masterInspector.onApplyTextSelectionFontSize = onWholePlaceholder(masterInspector.onApplyTextSelectionFontSize);
+    masterInspector.onApplyTextSelectionColor = onWholePlaceholder(masterInspector.onApplyTextSelectionColor);
     masterInspector.onEditLayouts = (layout) => {
       const index = masterStore.get().deck.slides.findIndex((slide) => slide.id === editingSlideId(layout));
       if (index !== -1) masterStore.selectSlide(index);

@@ -1,5 +1,9 @@
 import type { CustomLayout, Deck, LayoutMaster, Slide, SlideElement, TextEl } from './deck.js';
-import { ROLE_TYPE_SCALE_PROPERTIES } from './themes.js';
+
+/** The type a layout may set on a placeholder, outranking the theme on its slides. */
+const LAYOUT_TYPE_PROPERTIES = [
+  'font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'color',
+] as const;
 
 export type FixedLayout = 'freeform' | 'standard' | 'title';
 
@@ -189,14 +193,15 @@ function copyPlaceholderPresentation(
   // editor and pressing Done dropped the deck's typography back to the
   // stylesheet's on every slide at once, as if the deck had changed theme.
   //
-  // A master carries geometry and, at most, a face and weight -- never a type
-  // scale. The size of a title is the deck's, set once for every title in the
-  // theme; a size typed on a placeholder used to stamp itself onto every slide
-  // and silently take those boxes off the deck's scale for good.
-  const sourceStyle = withoutTypeScale(source.style);
-  const strippedContent = source.contentStyle ? withoutTypeScale(source.contentStyle) : undefined;
-  const sourceContentStyle = strippedContent && Object.keys(strippedContent).length > 0
-    ? strippedContent
+  // A master may carry type of its own -- a face, a weight, a size -- and
+  // what it sets outranks the theme on its slides: a title slide's title is
+  // larger than every other title because its layout says so. What a master
+  // is silent about stays the theme's. A size a master stops setting is taken
+  // back off its slides when the layouts are installed (see installLayouts),
+  // so a layout's size is never left behind as if the slide had asked for it.
+  const sourceStyle = structuredClone(source.style);
+  const sourceContentStyle = source.contentStyle && Object.keys(source.contentStyle).length > 0
+    ? structuredClone(source.contentStyle)
     : undefined;
   if (replaceStyle) {
     target.style = sourceStyle;
@@ -229,10 +234,39 @@ function copyPlaceholderPresentation(
   target.layoutPlaceholder = source.layoutPlaceholder;
 }
 
-function withoutTypeScale(style: Record<string, string>): Record<string, string> {
-  const copy: Record<string, string> = structuredClone(style);
-  for (const property of ROLE_TYPE_SCALE_PROPERTIES) delete copy[property];
-  return copy;
+/** The type a layout sets for each of its slots: what outranks the theme there. */
+function slotType(master: LayoutMaster): Map<LayoutSlot, Record<string, string>> {
+  const bySlot = new Map<LayoutSlot, Record<string, string>>();
+  for (const element of master.elements) {
+    if (element.type !== 'text' || !element.layoutPlaceholder) continue;
+
+    const own: Record<string, string> = {};
+    for (const property of LAYOUT_TYPE_PROPERTIES) {
+      const value = element.style[property] ?? element.contentStyle?.[property];
+      if (value !== undefined) own[property] = value;
+    }
+    bySlot.set(element.layoutPlaceholder, own);
+  }
+  return bySlot;
+}
+
+/**
+ * The type a slide's box takes from its layout rather than from the theme.
+ *
+ * Args:
+ *     deck: The deck, for its layouts.
+ *     slide: The slide the box is on.
+ *     element: A text box of that slide.
+ *
+ * Returns:
+ *     The declarations its layout sets for its slot; empty for a box that is
+ *     in no slot, or on a layout that sets no type there.
+ */
+export function layoutTypeOf(deck: LayoutSource, slide: Slide, element: SlideElement): Record<string, string> {
+  if (element.type !== 'text' || !element.layoutPlaceholder || !slide.layout) return {};
+
+  return slotType(resolveLayoutMaster(deck, resolvedLayoutId(deck, slide.layout)))
+    .get(element.layoutPlaceholder) ?? {};
 }
 
 function decorationCopy(slideId: string, source: SlideElement, order: number): SlideElement {
@@ -475,8 +509,34 @@ export function installLayouts(
   customLayouts: CustomLayout[],
 ): void {
   const previous = new Map((deck.customLayouts ?? []).map((layout) => [layout.id, layout]));
+  // What each layout set for its slots before this edit. A declaration a
+  // layout has stopped making is still on every slide it was copied to, and
+  // would otherwise stay there for good as though the slide had asked for it.
+  const before = { layoutMasters: deck.layoutMasters, customLayouts: deck.customLayouts };
+  const was = new Map<Slide, Map<LayoutSlot, Record<string, string>>>();
+  for (const slide of deck.slides) {
+    if (slide.layout) was.set(slide, slotType(resolveLayoutMaster(before, resolvedLayoutId(before, slide.layout))));
+  }
+
   deck.layoutMasters = masters;
   deck.customLayouts = customLayouts;
+  for (const [slide, slots] of was) {
+    const now = slotType(resolveLayoutMaster(deck, resolvedLayoutId(deck, slide.layout)));
+    for (const element of slide.elements) {
+      if (element.type !== 'text' || !element.layoutPlaceholder) continue;
+
+      const next = now.get(element.layoutPlaceholder) ?? {};
+      for (const [property, value] of Object.entries(slots.get(element.layoutPlaceholder) ?? {})) {
+        // Only the layout's own copy goes: a box that says something else for
+        // the same property was changed on the slide and keeps it.
+        if (next[property] !== undefined) continue;
+
+        if (element.style[property] === value) delete element.style[property];
+        if (element.contentStyle?.[property] === value) delete element.contentStyle[property];
+      }
+    }
+  }
+
   const kept = new Set(customLayouts.map((layout) => layout.id));
   for (const slide of deck.slides) {
     const gone = slide.layout && !isBuiltInLayout(slide.layout) && !kept.has(slide.layout)

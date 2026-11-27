@@ -139,9 +139,9 @@ export class Inspector {
   onApplyTextSelectionFontFamily?: (value: string) => boolean;
   onApplyTextSelectionFontSize?: (value: number) => boolean;
   /**
-   * This inspector edits layout masters. A master carries no type scale (see
-   * layoutMasters.ts), so its size field is shown for what a placeholder
-   * inherits and cannot be typed into: the deck's sizes live in the theme.
+   * This inspector edits layout masters. What is typed on a placeholder here,
+   * its size included, is the layout's own and outranks the theme on every
+   * slide of that layout (see layoutMasters.ts).
    */
   editsLayoutMasters = false;
   /** Apply spacing after only the paragraphs covered by the live text selection. */
@@ -1171,7 +1171,6 @@ export class Inspector {
       },
     );
     if (sizes.mixed || inheritedSizesDiffer) sizeField.querySelector('input')!.placeholder = 'Mixed';
-    if (this.editsLayoutMasters) lockSizeToTheme(sizeField);
     wrap.appendChild(sizeField);
 
     const weights = sharedValue(texts.map((text) => {
@@ -1592,7 +1591,6 @@ export class Inspector {
           fontSizeField.appendChild(status);
         }
         fontMetrics.appendChild(fontSizeField);
-        if (this.editsLayoutMasters) lockSizeToTheme(fontSizeField);
         fontMetrics.appendChild(optionalNumberField(
           'Font weight',
           displayedWeight,
@@ -3385,17 +3383,6 @@ function trimRangeSlider(
   slider.append(track, startInput, endInput);
   wrap.append(span, slider);
   return wrap;
-}
-
-/** In the layout editor the size field only reports what the theme gives. */
-function lockSizeToTheme(sizeField: HTMLElement): void {
-  const reason = 'Sizes are the deck\u2019s, not the layout\u2019s: change them under Theme \u203a Edit theme.';
-  for (const control of sizeField.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button')) {
-    control.disabled = true;
-    control.title = reason;
-  }
-  sizeField.classList.add('theme-owned');
-  sizeField.title = reason;
 }
 
 type ThemeTypeRole = ThemeTextRole;
