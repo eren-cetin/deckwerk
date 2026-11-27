@@ -39,14 +39,14 @@ afterEach(async () => {
   workDir = '';
 });
 
-/** Open the folder menu, choose Rename…, type `name` and press Enter. */
-async function renameTo(name: string): Promise<void> {
+/** Open the folder menu, choose a rename, type `name` and press Enter. */
+async function renameTo(name: string, action = 'Rename Folder…'): Promise<void> {
   await editor!.click('.bar-deck-name');
   await eventually(() => editor!.evaluate<string[]>(
     `[...document.querySelectorAll('#ctx-menu button')].map((row) => row.textContent)`),
-  'the folder menu never opened', (rows) => rows.includes('Rename…'));
+  'the folder menu never opened', (rows) => rows.includes(action));
   await editor!.evaluate(`([...document.querySelectorAll('#ctx-menu button')]
-    .find((row) => row.textContent === 'Rename…').click(), true)`);
+    .find((row) => row.textContent === ${JSON.stringify(action)}).click(), true)`);
   await eventually(() => editor!.evaluate<boolean>(`Boolean(document.querySelector('.deck-rename input'))`),
     'the rename dialog never opened', Boolean);
   await editor!.evaluate(`(() => {
@@ -113,6 +113,18 @@ describe.skipIf(!electronBinary)('renaming a presentation in the desktop app', (
       `window.api.getDeck().then((session) => ({ dir: session.dir, slides: session.deck.slides.length }))`);
     expect(open).toEqual({ dir: after, slides: 2 });
     expect(await onSecond()).toBe(true);
+
+    // The title is a separate name: the folder rename left it alone, and
+    // renaming it leaves the folder where it is.
+    const savedTitle = async () => JSON.parse(await readFile(join(after, 'deck.json'), 'utf8')).title as string;
+    expect(await savedTitle()).toBe('Untitled deck');
+    await renameTo('Thesis Defence', 'Rename Title…');
+    await eventually(savedTitle, 'the new title was never saved', (title) => title === 'Thesis Defence');
+    expect(await folderLabel()).toBe('Doctoral Day');
+    expect(existsSync(join(after, 'deck.json'))).toBe(true);
+    // The title change is an edit of its own; undo it before the deletion.
+    await editor.chord('z', 'KeyZ', 90, process.platform === 'darwin' ? 4 : 2);
+    await eventually(savedTitle, 'the title change could not be undone', (title) => title === 'Untitled deck');
 
     // The history moved with the folder: the deletion before the rename undoes.
     await editor.chord('z', 'KeyZ', 90, process.platform === 'darwin' ? 4 : 2);

@@ -3,7 +3,7 @@ import { deckPathParts } from './deckPath.js';
 import { PanelToggles } from './panelToggles.js';
 import { showTemplatePicker } from './templateDialogs.js';
 import { createTemplateFlows } from './templateActions.js';
-import { showRenameDeckDialog } from './renameDialog.js';
+import { showRenameDeckDialog, showRenameTitleDialog } from './renameDialog.js';
 import '../player/player.css';
 import '../appChrome.css';
 import './editor.css';
@@ -446,7 +446,7 @@ function syncDeckNameLabel(): void {
   const { parent, name } = deckPathParts(dir, window.api.homeDir);
   const shown = name || deck.title || '';
   deckNameLabel.hidden = shown === '';
-  deckNameLabel.title = dir ? `${dir}\nClick to show in Finder, copy the path or rename` : '';
+  deckNameLabel.title = dir ? `${dir}\nClick to show in Finder, copy the path or rename the folder or title` : '';
   deckNameLabel.setAttribute('aria-label', dir ? `Deck folder ${dir}` : shown);
   const parentNode = deckNameLabel.querySelector<HTMLElement>('.bar-deck-parent > bdi')!;
   parentNode.textContent = parent;
@@ -480,7 +480,8 @@ function openDeckPathMenu(anchor: HTMLElement): void {
       () => setStatusMessage('Could not copy the path'),
     );
   });
-  item('Rename…', () => void renamePresentation());
+  item('Rename Folder…', () => void renamePresentation());
+  item('Rename Title…', () => void renameTitle());
   const box = anchor.getBoundingClientRect();
   openContextMenu(menu, { x: box.left, y: box.bottom + 4 });
   menu.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -964,7 +965,7 @@ async function renamePresentation(): Promise<void> {
   const { dir } = store.get();
   if (!dir) return;
   const current = deckPathParts(dir, window.api.homeDir).name;
-  const name = await showRenameDeckDialog(current);
+  const name = await showRenameDeckDialog(current, 'Rename folder');
   if (!name) return;
   try {
     const session = await runOperation(`Renaming ${current}…`, async (operation) => {
@@ -979,6 +980,18 @@ async function renamePresentation(): Promise<void> {
   } catch (err) {
     setStatusMessage(`Could not rename the presentation: ${err instanceof Error ? err.message : err}`);
   }
+}
+
+/**
+ * Rename the title stored in the open deck, as one undoable edit. The folder
+ * is a separate name and stays where it is.
+ */
+async function renameTitle(): Promise<void> {
+  const title = await showRenameTitleDialog(store.get().deck.title);
+  if (!title) return;
+
+  store.replaceWithHistory({ ...store.get().deck, title }, 'Rename title');
+  setStatusMessage(`Changed the title to “${title}”`);
 }
 
 function importKeynotePresentation(): Promise<void> {

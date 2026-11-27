@@ -94,7 +94,7 @@ describe.skipIf(!electronBinary)('the deck path and New Window', () => {
     await editor.click('.bar-deck-name', 'deck folder');
     expect(await editor.evaluate<string[]>(
       '[...document.querySelectorAll("#ctx-menu button")].map((row) => row.textContent)'))
-      .toEqual(['Show in Finder', 'Copy path']);
+      .toEqual(['Show in Finder', 'Copy path', 'Rename Folder…', 'Rename Title…']);
     await editor.evaluate('(document.getElementById("ctx-menu")?.remove(), true)');
 
     // File › New Window in the application menu: a second, empty window.
