@@ -18,7 +18,8 @@ export interface LocalAgentEvent {
 }
 
 interface ParticipantAgent {
-  link: LocalAgentLink | null;
+  /** Every bridge attached under this participant, oldest first; one person may run several agents. */
+  links: Map<string, LocalAgentLink>;
   messages: AgentPanelMessage[];
   scratchpad: AgentPanelState['scratchpad'];
   busy: boolean;
@@ -41,23 +42,25 @@ export class LocalAgentRegistry {
 
   attach(deckPath: string, participantId: string, link: LocalAgentLink): AgentPanelState {
     const agent = this.agent(deckPath, participantId);
-    const reconnected = Boolean(agent.link && agent.link.clientId !== link.clientId);
-    agent.link = link;
+    agent.links.delete(link.clientId);
+    agent.links.set(link.clientId, link);
     agent.busy = false;
     agent.activity = null;
-    this.note(agent, 'system', reconnected
-      ? `${link.name} reconnected.`
-      : `${link.name} connected and mirrored the deck.`);
+    this.note(agent, 'system', `${link.name} connected and mirrored the deck.`);
     return this.emit(deckPath, participantId);
   }
 
   detach(deckPath: string, participantId: string, clientId: string): AgentPanelState | null {
     const agent = this.agents.get(key(deckPath, participantId));
-    if (!agent?.link || agent.link.clientId !== clientId) return null;
-    const name = agent.link.name;
-    agent.link = null;
-    agent.busy = false;
-    agent.activity = null;
+    const link = agent?.links.get(clientId);
+    if (!agent || !link) return null;
+    agent.links.delete(clientId);
+    if (agent.links.size === 0) {
+      agent.busy = false;
+      agent.activity = null;
+    }
+
+    const name = link.name;
     this.note(agent, 'system', `${name} disconnected.`);
     return this.emit(deckPath, participantId);
   }
@@ -70,8 +73,10 @@ export class LocalAgentRegistry {
     return this.emit(deckPath, participantId);
   }
 
+  /** Return the most recently attached bridge for a participant, if any is attached. */
   linked(deckPath: string, participantId: string): LocalAgentLink | null {
-    return this.agents.get(key(deckPath, participantId))?.link ?? null;
+    const links = this.agents.get(key(deckPath, participantId))?.links;
+    return links && links.size > 0 ? [...links.values()].at(-1)! : null;
   }
 
   async getState(deckPath: string, participantId: string): Promise<AgentPanelState> {
@@ -123,7 +128,7 @@ export class LocalAgentRegistry {
     const k = key(deckPath, participantId);
     let agent = this.agents.get(k);
     if (!agent) {
-      agent = { link: null, messages: [], scratchpad: null, busy: false, activity: null };
+      agent = { links: new Map(), messages: [], scratchpad: null, busy: false, activity: null };
       this.agents.set(k, agent);
     }
     return agent;
@@ -135,10 +140,11 @@ export class LocalAgentRegistry {
   }
 
   private state(deckPath: string, participantId: string): AgentPanelState {
+    const link = this.linked(deckPath, participantId);
     const agent = this.agent(deckPath, participantId);
     return {
-      deckPath: resolve(deckPath), connection: agent.link ? 'ready' : 'unavailable',
-      agentName: agent.link?.name ?? null, scratchpad: agent.scratchpad,
+      deckPath: resolve(deckPath), connection: link ? 'ready' : 'unavailable',
+      agentName: link?.name ?? null, scratchpad: agent.scratchpad,
       busy: agent.busy, activity: agent.activity, messages: [...agent.messages], error: null,
     };
   }

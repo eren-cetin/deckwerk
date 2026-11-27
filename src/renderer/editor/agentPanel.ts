@@ -24,6 +24,7 @@ export class AgentPanel {
   private readonly status: HTMLElement;
   private readonly connect: HTMLElement;
   private readonly connectCode: HTMLElement;
+  private readonly connectLead: HTMLElement;
   private connectCommand: string;
   private readonly messages: HTMLElement;
   private readonly error: HTMLElement;
@@ -85,6 +86,7 @@ export class AgentPanel {
     );
     this.connect = connect.card;
     this.connectCode = connect.code;
+    this.connectLead = connect.lead;
     this.scratchpadBar = document.createElement('div');
     this.scratchpadBar.className = 'agent-chat-scratchpad-bar';
     this.scratchpadBar.hidden = true;
@@ -181,7 +183,10 @@ export class AgentPanel {
     this.status.textContent = state.connection !== 'ready'
       ? 'Waiting for your agent…' : state.busy ? state.activity ?? 'Working…' : 'Connected';
     this.status.dataset.state = state.connection === 'ready' ? (state.busy ? 'busy' : 'ready') : 'idle';
-    this.connect.hidden = state.connection === 'ready';
+    // The command stays up after a bridge attaches: the same participant link
+    // connects any number of further agents.
+    this.connectLead.textContent = state.connection === 'ready'
+      ? 'Connect another agent with this command:' : 'Run this command:';
     this.error.hidden = !state.error;
     this.error.textContent = state.error ?? '';
     this.renderMessages();
@@ -269,7 +274,7 @@ function connectCard(
   command: string,
   currentCommand: () => string,
   mode: 'local' | 'hosted',
-): { card: HTMLElement; code: HTMLElement } {
+): { card: HTMLElement; code: HTMLElement; lead: HTMLElement } {
   const card = document.createElement('div');
   card.className = 'agent-chat-connect';
   const lead = document.createElement('p');
@@ -288,7 +293,7 @@ function connectCard(
   copy.classList.add('agent-chat-connect-copy');
   row.append(code, copy);
   card.append(lead, row);
-  return { card, code };
+  return { card, code, lead };
 }
 
 function smallButton(label: string, action: () => void): HTMLButtonElement {

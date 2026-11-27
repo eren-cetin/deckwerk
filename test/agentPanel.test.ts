@@ -51,6 +51,18 @@ describe('filesystem agent panel', () => {
     expect(panel.element.querySelector('.panel-resize-handle')).toBeNull();
   });
 
+  it('keeps the connect command available once an agent is connected', () => {
+    const transport = api(state());
+    const panel = new AgentPanel({
+      api: transport, currentDeckPath: () => 'talk', connectCommand: 'slide-agent connect session',
+    });
+    transport.publish(state({ connection: 'ready', agentName: 'Codex' }));
+    const card = panel.element.querySelector<HTMLElement>('.agent-chat-connect')!;
+    expect(card.hidden).toBe(false);
+    expect(card.textContent).toContain('Connect another agent');
+    expect(card.querySelector('code')?.textContent).toBe('slide-agent connect session');
+  });
+
   it('shows bridge activity and opens the latest source/import scratchpad', () => {
     const transport = api(state());
     const panel = new AgentPanel({
