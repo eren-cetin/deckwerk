@@ -591,9 +591,16 @@ describe('slide-agent connect', { timeout: 120_000 }, () => {
     await writeFile(file, page, 'utf8');
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 1200));
     expect((await serverDeck()).slides).toHaveLength(2);
-    await writeFile(file, page.replace('>Slide title</h1>', '>From ./deck</h1>'), 'utf8');
+    await writeFile(file, page
+      .replace('>Slide title</h1>', '>From ./deck</h1>')
+      .replace('>Body text</div>', '>See <a href="https://arxiv.org/html/2410.06940">the paper</a>.</div>'), 'utf8');
     const result = JSON.parse(await deck('apply', '--html', 'edit/add.html')) as { changes: { inserted: string[] } };
     expect(result.changes.inserted).toHaveLength(1);
+    // A link is not a remote load: the server used to strip its address,
+    // leaving text that looked like a link and went nowhere.
+    const linked = (await serverDeck()).slides.find((slide) => slide.id === result.changes.inserted[0])!;
+    expect(linked.elements.some((element) => element.type === 'text'
+      && element.html.includes('<a href="https://arxiv.org/html/2410.06940"'))).toBe(true);
     const again = JSON.parse(await deck('apply', '--html', 'edit/add.html')) as { changes: { inserted: string[] }; idempotent?: boolean };
     expect(again.idempotent).toBe(true);
     await until(async () => (await serverDeck()).slides.length === 3, 'one inserted slide');

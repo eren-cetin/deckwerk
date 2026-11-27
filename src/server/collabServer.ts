@@ -3516,6 +3516,43 @@ function validateEditedAsset(src: string | null | undefined, deckDir: string, la
 }
 
 /** Conservative Node-side sanitizer for the HTTP HTML import path. */
+/**
+ * Remove references that would make a slide load something from the network.
+ *
+ * A remote `src` or `poster`, and a remote `href` on anything that fetches
+ * (`<link>`, an SVG `<image>`), is dropped: a deck must present offline and
+ * must not call out to a third party from the stage. A link is not a load:
+ * `<a href="https://…">` goes nowhere until someone clicks it, so it stays,
+ * as it does in the editor's own sanitiser (shared/htmlSafety.ts).
+ *
+ * The decision needs the tag an attribute sits on, so this walks start tags.
+ * It used to test the attribute text alone for a leading `<a`, which never
+ * matched, and stripped the address off every link an agent applied.
+ *
+ * Args:
+ *     html: Authored markup.
+ *
+ * Returns:
+ *     The markup with those attributes removed, and the URLs that were.
+ */
+export function blockRemoteResources(html: string): { html: string; blocked: string[] } {
+  const blocked: string[] = [];
+  const cleaned = html.replace(/<([a-z][\w:-]*)\b((?:"[^"]*"|'[^']*'|[^>"'])*)>/gi, (tag, name: string, attrs: string) => {
+    const anchor = name.toLowerCase() === 'a';
+    const kept = attrs.replace(
+      /(^|\s)(src|poster|href)\s*=\s*(["'])(https?:[^"']+)\3/gi,
+      (attribute, _lead: string, attr: string, _quote: string, url: string) => {
+        if (anchor && attr.toLowerCase() === 'href') return attribute;
+
+        blocked.push(url);
+        return '';
+      },
+    );
+    return kept === attrs ? tag : `<${name}${kept}>`;
+  });
+  return { html: cleaned, blocked };
+}
+
 async function sanitizeServerHtml(
   source: string,
   deckDir: string,
@@ -3528,11 +3565,9 @@ async function sanitizeServerHtml(
     .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/\s+(?:src|href|poster)\s*=\s*(["'])javascript:[\s\S]*?\1/gi, '');
 
-  html = html.replace(/(src|poster|href)\s*=\s*(["'])(https?:[^"']+)\2/gi, (match, attr: string, _quote: string, url: string) => {
-    if (attr.toLowerCase() === 'href' && /^<a\b/i.test(match)) return match;
-    blocked.push(url);
-    return '';
-  });
+  const remote = blockRemoteResources(html);
+  html = remote.html;
+  blocked.push(...remote.blocked);
   html = html.replace(/@import\s+(?:url\()?\s*['"]?https?:[^;]+;/gi, (match) => {
     blocked.push(match);
     return '/* external import removed */';
