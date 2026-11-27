@@ -786,13 +786,16 @@ async function validateCommand(argv: string[], io: CliIo): Promise<number> {
   let selectedSlideIds: string[] = [];
   if (scoped) {
     selectedSlideIds = (await currentContext(deckDir, { scenes: false })).selectedSlideIds;
-    wanted = selectionFilter(flags);
     try {
       resolveRequestedSlides(flags, await loadDeck(deckDir));
     } catch (error) {
       // A stale id is a usage error; an unparseable deck is already in `errors`.
       if (error instanceof UsageError) throw error;
     }
+
+    // After the numbers are resolved to ids: built before, the filter held
+    // "2" where the findings say "slide-5", and `--slide 2` reported nothing.
+    wanted = selectionFilter(flags);
   }
   let importGaps: Array<{
     slideId: string; elementId: string; originalType: string; note: string;
