@@ -35,6 +35,7 @@ import {
 } from './streamingRenditions.js';
 import { ClientMessageSchema, COLLAB_PROTOCOL_VERSION, type PresenceState, type ServerMessage } from '../shared/collab.js';
 import { CollabSession } from './collabSession.js';
+import { DeckTreeCache, type DeckTreeNode } from './deckTreeCache.js';
 import { readZip, writeZip, type ZipEntry, type ZipFile } from './zip.js';
 import {
   compileHtmlToSlides,
@@ -529,6 +530,21 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
   const MAX_FOLDER_DEPTH = 8;
 
   /**
+   * Which directories under the root are decks and which are folders. Walked
+   * once and kept (deckTreeCache.ts), because on a network mount the walk is
+   * the whole cost of a listing.
+   */
+  const deckTree = new DeckTreeCache({
+    rootDir,
+    // A single-deck session has no folder tree to walk.
+    maxDepth: hostedDeckId ? 0 : MAX_FOLDER_DEPTH,
+    descend: (id) => splitDeckPath(id) !== null,
+  });
+  // Walk now rather than on the first listing, so whoever opens the picker
+  // first does not sit through a cold network mount.
+  void deckTree.read();
+
+  /**
    * How many people are editing a room. A person with the deck open in two
    * tabs is one editor; agent bridges and view-only spectators are none.
    */
@@ -593,28 +609,25 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
    * folder that contains a folder they *can* see — usually their own — which
    * has to stay so the visible one still has a path.
    */
-  async function collectListing(
+  async function collectListing(identity: Identity | null): Promise<Listing & { accessibleDecks: number }> {
+    return listingOf(await deckTree.read(), '', identity);
+  }
+
+  /** The listing for one level of the cached tree, `relative` being its folder. */
+  async function listingOf(
+    nodes: DeckTreeNode[],
     relative: string,
-    depth: number,
     identity: Identity | null,
   ): Promise<Listing & { accessibleDecks: number }> {
     const out: Listing = { decks: [], folders: [] };
     let accessibleDecks = 0;
-    let entries;
-    try {
-      entries = await readdir(relative ? join(rootDir, relative) : rootDir, { withFileTypes: true });
-    } catch {
-      return { ...out, accessibleDecks };
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const childId = relative ? `${relative}/${entry.name}` : entry.name;
+    for (const node of nodes) {
+      const childId = node.id;
       const childDir = join(rootDir, childId);
-      if (isDeckDir(childDir)) {
+      if (node.isDeck) {
         if (hostedDeckId && childId !== hostedDeckId) continue;
+        // Read live, so a deck deleted since the last walk drops out here.
         const listed = await deckListEntry(childId, childDir, identity);
-        // A deck's own subdirectories (assets/, edit/) are part of the deck,
-        // never folders: stop here either way.
         if (listed) {
           out.decks.push(listed);
           accessibleDecks += 1;
@@ -622,9 +635,7 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
         continue;
       }
       if (hostedDeckId) continue; // a single-deck session has no folder tree
-      if (depth + 1 > MAX_FOLDER_DEPTH) continue;
-      if (!splitDeckPath(childId)) continue;
-      const inside = await collectListing(childId, depth + 1, identity);
+      const inside = await listingOf(node.children, childId, identity);
       const owner = accessControl ? await readFolderOwner(childDir, accessControl) : '';
       const visible = !accessControl || !identity
         || folderVisibleTo(identity.login, { owner, accessibleDecks: inside.accessibleDecks }, accessControl)
@@ -632,7 +643,7 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
       if (!visible) continue;
       const folder: FolderListEntry = {
         path: childId,
-        name: entry.name,
+        name: node.name,
         parent: relative,
         decks: inside.decks.filter((deck) => deck.folder === childId).length,
       };
@@ -648,12 +659,12 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
   }
 
   async function listDecks(identity: Identity | null): Promise<DeckListEntry[]> {
-    const { decks } = await collectListing('', 0, identity);
+    const { decks } = await collectListing(identity);
     return decks.sort((a, b) => a.id.localeCompare(b.id));
   }
 
   async function listFolders(identity: Identity | null): Promise<FolderListEntry[]> {
-    const { folders } = await collectListing('', 0, identity);
+    const { folders } = await collectListing(identity);
     return folders.sort((a, b) => a.path.localeCompare(b.path));
   }
 
@@ -1021,6 +1032,13 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
     const url = new URL(request.url ?? '/', 'http://localhost');
     const path = decodeURIComponent(url.pathname);
     const requestedDeck = url.searchParams.get('deck');
+    if (changesDeckTree(path, request.method)) {
+      // Before, so a listing racing this request cannot settle on the old
+      // shape; after, so the next one sees what this request left behind.
+      deckTree.invalidate();
+      response.once('close', () => deckTree.invalidate());
+    }
+
     // A second rename of a deck already being renamed is refused, not queued
     // behind the first: queued, it would rename whatever the first produced.
     if (path === '/api/decks/rename' && requestedDeck && renamesInFlight.has(requestedDeck)) {
@@ -3795,6 +3813,18 @@ const MAX_PATH_SEGMENTS = 8;
  * through: no empty, relative, whitespace-padded or backslash segments, and
  * no unbounded nesting.
  */
+/**
+ * Whether a request can add, remove or move a deck or folder. Deliberately
+ * narrow: each hit makes the next listing wait for a full walk of the root.
+ */
+function changesDeckTree(path: string, method: string | undefined): boolean {
+  if (method !== 'POST' && method !== 'DELETE') return false;
+  if (path === '/api/decks/title') return false;
+  return path === '/api/decks' || path.startsWith('/api/decks/')
+    || path === '/api/folders' || path.startsWith('/api/folders/')
+    || path === '/api/import-keynote' || path === '/api/import-pptx' || path === '/api/import-deck';
+}
+
 function splitDeckPath(value: string): string[] | null {
   if (!value || value.includes('\\') || value.includes('\0') || value.length > 400) return null;
   const segments = value.split('/');
