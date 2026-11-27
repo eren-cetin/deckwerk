@@ -214,6 +214,16 @@ turns into, not a list of things to opt into.
   primitive (`rect`, `circle`, `ellipse`, `line`, `path`, `polygon`,
   `polyline`) becomes that shape: a `<line>` with `marker-end` is a real
   arrow, angle and all, and a single `<path>` keeps its `d` and its viewBox.
+- **Plots** — `<div data-element="plot" data-plot='{…}' style="width:780px;
+  height:470px;">` is a line or bar plot drawn from the JSON in `data-plot`
+  (`xValues`, `series: [{ name, values }]`, optional `kind`, `title`,
+  `xLabel`, axis limits, `legend`), in the deck's plot style. It needs a width
+  and a height; anything inside the div is scenery and is redrawn. The plot
+  stays an object: a human double-clicks it to edit data and colours.
+  `slide-agent plot [deck] spec.json [--size WxH]` validates a description
+  and prints the markup with its drawing, and `slide-agent capabilities plot`
+  has every field. Use it instead of drawing a chart as an `<svg>`, which
+  would import as an inert region.
 - **Decoration** — `::before`/`::after` come across too: solid paint as a
   shape, a gradient bar, a shadowed chip, a border-triangle arrowhead or a
   `content:"→"` as a styled text object, painted in front of or behind its
@@ -476,6 +486,7 @@ Diagnostics go to stderr. Exit codes are `0` ok, `1` error,
 | `preview [deck] [--port n] [--open]` | Export through the real player and serve on localhost; prints its URL as JSON, then blocks — run it in the background and give the user the URL |
 | `validate [deck]` | Schema, duplicate ids, timeline references, missing assets |
 | `asset import <deck> <paths...>` | Media copied into `assets/`, deduped, probed, transcoded |
+| `plot [deck] <spec.json> [--size WxH]` | Authoring markup for a line or bar plot described as JSON; writes nothing |
 | `theme list\|show\|create\|delete\|choose\|apply [deck]` | The theme system: what is on offer, and writing, choosing and adopting one |
 | `transaction apply <deck> <file.json>` | One atomic, named change |
 

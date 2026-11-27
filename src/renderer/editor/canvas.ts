@@ -2,6 +2,7 @@ import { openContextMenu } from './contextMenuPlacement.js';
 import type { Deck, Slide, SlideElement } from '@shared/deck.js';
 import { type Rect, fitScale, makeId } from '@shared/geometry.js';
 import { createCaption } from '@shared/captions.js';
+import { plotSpecOf } from '@shared/plot.js';
 
 type XY = { x: number; y: number };
 import {
@@ -10,6 +11,7 @@ import {
   applySlideRootStyles,
   applyVideoPlaybackState,
   applyTextRenderState,
+  syncPlotBody,
   syncShapeBody,
   fitAutoText,
   renderElement,
@@ -824,6 +826,8 @@ export class EditorCanvas {
 
   /** Called to open the trim window for a video. */
   onTrimRequest?: (el: Extract<SlideElement, { type: 'video' }>) => void;
+  /** Double-clicking a plot asks the shell to open its data dialog. */
+  onEditPlot?: (elementId: string) => void;
 
   /**
    * Stream text edits to the store while typing (throttled), instead of only
@@ -1513,6 +1517,7 @@ export class EditorCanvas {
       // A shape's drawing is sized by its own viewBox, so the wrapper's new
       // box is not enough: rebuild the SVG for the current geometry.
       if (el.type === 'shape') syncShapeBody(node, el);
+      if (el.type === 'plot') syncPlotBody(node, el);
     }
   }
 
@@ -3324,6 +3329,8 @@ export class EditorCanvas {
       this.toggleVideo(hit.id);
     } else if (hit.type === 'web') {
       this.toggleWebLive(hit.id);
+    } else if (hit.type === 'plot') {
+      this.onEditPlot?.(hit.id);
     }
   }
 
@@ -7123,6 +7130,11 @@ function sameStructure(a: Slide, b: Slide, ignoreHtml = false): boolean {
         x.path !== y.path || x.arrowStart !== y.arrowStart || x.arrowEnd !== y.arrowEnd ||
         Boolean(x.control) !== Boolean(y.control)
       ) return false;
+    }
+    // A plot's data and styling are all in its drawing; only its size is
+    // geometry (applyGeometry redraws it for that).
+    if (x.type === 'plot' && y.type === 'plot') {
+      if (JSON.stringify(plotSpecOf(x)) !== JSON.stringify(plotSpecOf(y))) return false;
     }
     // The crop VALUE is geometry (applyGeometry moves the inner media), but a
     // crop appearing or vanishing changes the DOM shape (wrapper vs bare tag).

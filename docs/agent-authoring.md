@@ -42,7 +42,13 @@ slide backgrounds, request only the matching named recipe:
     slide-agent capabilities builds morph morph-target
     slide-agent capabilities image crop mask media-frame video shapes groups
     slide-agent capabilities text-roles lists auto-fit latex background background-image
-    slide-agent capabilities comments web-element html-element
+    slide-agent capabilities comments web-element html-element plot
+
+A chart of numbers is a `plot`, not a hand-drawn SVG: write
+`<div data-element="plot" data-plot='{"title":"…","xValues":[…],"series":[{"name":"…","values":[…]}]}' style="width:780px; height:470px;"></div>`
+(line by default, `"kind":"bar"` for bars) and the deck draws it in its own
+plot style and keeps it editable. `slide-agent plot spec.json` checks a
+description and prints the markup with the drawing inside.
 
 Edit speaker notes in `notes.md`. Sections are separated by a line containing
 only `---`; keep each generated slide-id anchor with its note.

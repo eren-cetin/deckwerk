@@ -846,6 +846,9 @@ export function measureSlides(doc: Document): MeasuredSlide[] {
     // half of the computed presentation: without the authored font size it
     // came back rendered at the deck's default body size, columns and all.
     if (node.dataset.element === 'table') return 'text';
+    // A plot is described by its data attribute and drawn by the player;
+    // nothing about it is text to be measured, wrapped or given slack.
+    if (node.dataset.element === 'plot') return 'plot';
     if (node.dataset.element === 'html' || CONTENT_TAGS.has(tag)) return 'html';
     return 'text';
   };

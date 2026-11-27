@@ -361,6 +361,72 @@ const WebElement = BaseElement.extend({
   title: z.string().default(''),
 });
 
+/** Where a plot's legend sits inside the plot area; `none` hides it. */
+export const PLOT_LEGEND_POSITIONS = [
+  'top-right', 'top-left', 'bottom-right', 'bottom-left', 'none',
+] as const;
+
+/**
+ * What a plot draws, without the box it is drawn in.
+ *
+ * Kept apart from the element so the same object can be validated wherever a
+ * plot is described on its own: the `data-plot` attribute of an authoring
+ * page, the `slide-agent plot` spec file, the plot dialog's working copy.
+ * Every field has a default, so `{ "xValues": […], "series": […] }` is a whole plot.
+ */
+export const PlotSpecSchema = z.object({
+  kind: z.enum(['line', 'bar']).default('line'),
+  title: z.string().default(''),
+  xLabel: z.string().default(''),
+  yLabel: z.string().default(''),
+  /**
+   * The shared x column: numbers for a numeric axis, anything else for
+   * categories. A bar plot always reads it as categories.
+   */
+  xValues: z.array(z.union([z.number(), z.string()])).max(2000).default([]),
+  /**
+   * One column of y values per series, aligned with `xValues`. `null` is a missing
+   * sample, which is how series sampled at different x values share a column.
+   */
+  series: z.array(z.object({
+    name: z.string().default(''),
+    color: z.string().default('#5b6cf5'),
+    values: z.array(z.number().nullable()).max(2000).default([]),
+  })).max(24).default([]),
+  /** Axis limits; `null` fits the data. */
+  yMin: z.number().nullable().default(null),
+  yMax: z.number().nullable().default(null),
+  xMin: z.number().nullable().default(null),
+  xMax: z.number().nullable().default(null),
+  legend: z.enum(PLOT_LEGEND_POSITIONS).default('top-right'),
+  grid: z.boolean().default(true),
+  markers: z.boolean().default(true),
+  lineWidth: z.number().min(0.5).max(24).default(3),
+  /** Tick-label size in canvas pixels; every other measure scales with it. */
+  textSize: z.number().min(6).max(120).default(22),
+  /**
+   * Ink for everything that is not a series. `null` follows the slide: text
+   * takes the slide's own colour, and the marker halo is simply not drawn.
+   * The editor resolves these from the theme when it creates a plot.
+   */
+  colors: z.object({
+    title: z.string().nullable().default(null),
+    axis: z.string().nullable().default(null),
+    grid: z.string().nullable().default(null),
+    halo: z.string().nullable().default(null),
+  }).default({}),
+});
+
+/**
+ * A line or bar plot drawn from its own data, in the deck's plot style.
+ * The drawing is derived (src/shared/plotSvg.ts) and regenerated at the
+ * element's size, so resizing reflows the plot instead of stretching it.
+ */
+const PlotElement = BaseElement.extend({
+  type: z.literal('plot'),
+  ...PlotSpecSchema.shape,
+});
+
 /**
  * Produced by the Keynote importer when it meets an object it cannot map.
  * Carries the original geometry so the slide stays laid out correctly, and
@@ -380,6 +446,7 @@ export const ElementSchema = z.discriminatedUnion('type', [
   ShapeElement,
   HtmlElement,
   WebElement,
+  PlotElement,
   UnsupportedElement,
 ]);
 
@@ -551,6 +618,8 @@ export type ImageEl = z.infer<typeof ImageElement>;
 export type VideoEl = z.infer<typeof VideoElement>;
 export type ShapeEl = z.infer<typeof ShapeElement>;
 export type HtmlEl = z.infer<typeof HtmlElement>;
+export type PlotEl = z.infer<typeof PlotElement>;
+export type PlotSpec = z.infer<typeof PlotSpecSchema>;
 export type UnsupportedEl = z.infer<typeof UnsupportedElement>;
 export type Slide = z.infer<typeof SlideSchema>;
 export type Comment = z.infer<typeof CommentSchema>;

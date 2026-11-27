@@ -1,9 +1,12 @@
 import type { AgentOperation } from './agent.js';
 import { LAYOUT_SLOT_PATTERN, MediaEffectSchema, MIRRORED_TEXT_STYLE_PROPERTIES } from './deck.js';
-import type { Deck, MediaEffect, Slide, SlideElement, TimelineEntry } from './deck.js';
+import type { Deck, MediaEffect, PlotSpec, Slide, SlideElement, TimelineEntry } from './deck.js';
+import { ZodError } from 'zod';
 import { fitAutoTextElement } from './autoFit.js';
 import { KATEX_AUTO_RENDER_JS, KATEX_CSS, KATEX_JS } from './katexInline.js';
 import { shapeSvg } from './shapeSvg.js';
+import { plotSvg } from './plotSvg.js';
+import { completePlotSpec, plotSpecOf } from './plot.js';
 import { applyTableColumnWidths } from './paragraphs.js';
 import { mathbbMacro } from './katexMacros.js';
 import {
@@ -687,6 +690,7 @@ export function slidesFromMeasured(deck: Deck, measured: MeasuredSlide[]): Slide
     const built = slideFromMeasured(slide, {
       slideId: slide.id ?? nextSlideId(used, index),
       usedIds: used,
+      deck,
     });
     const layout = slide.layout;
     if (layout === undefined) return built;
@@ -718,14 +722,14 @@ function nextSlideId(used: Set<string>, index: number): string {
 /** Turn one measured slide into a deck slide, ids minted where absent. */
 export function slideFromMeasured(
   measured: MeasuredSlide,
-  opts: { slideId: string; usedIds: Set<string> },
+  opts: { slideId: string; usedIds: Set<string>; deck?: Deck },
 ): Slide {
   const timeline: TimelineEntry[] = [];
   const elements: SlideElement[] = [];
 
   measured.nodes.forEach((node, index) => {
     const id = uniqueId(node.elementId ?? `${opts.slideId}-${node.tag}-${index + 1}`, opts.usedIds);
-    const element = elementFromNode(node, id, index + 1);
+    const element = elementFromNode(node, id, index + 1, opts.deck);
     if (!element) return;
     elements.push(element);
     const build = buildFromNode(node, id, timeline.length);
@@ -749,6 +753,7 @@ export function elementFromNode(
   node: MeasuredNode,
   id: string,
   z: number,
+  deck?: Deck,
 ): SlideElement | null {
   if (node.rect.w <= 0 || node.rect.h <= 0) return null;
   const contentStyle = contentStyleFrom(node.dataset.contentStyle);
@@ -881,6 +886,14 @@ export function elementFromNode(
       interactive: node.dataset.interactive !== 'false',
       title: node.dataset.title ?? '',
     };
+  }
+
+  // A plot. Like a shape it has no markup of its own: the description rides
+  // on `data-plot` as JSON and the drawing inside the box is scenery. What the
+  // description leaves out is filled in — colours from the deck's theme when
+  // the compile has the deck — so `xValues` and `series` are a whole plot.
+  if (node.dataset.element === 'plot') {
+    return { ...base, type: 'plot', ...plotSpecFrom(node.dataset.plot, deck) };
   }
 
   if (node.dataset.element === 'unsupported') {
@@ -1197,6 +1210,14 @@ function elementToHtml(element: SlideElement, build?: TimelineEntry): string {
             + `font:24px system-ui,sans-serif;color:#667;background:#eef0f3;border:2px dashed #99a;box-sizing:border-box;">`
             + `web page: ${escape(element.title || element.src)}</div>`)
         + '</div>';
+    case 'plot':
+      // The description is the element; the drawing after it comes from the
+      // builder the player uses and is marked as scenery, so the walk reads
+      // the plot back from `data-plot` instead of from its picture. Edit the
+      // JSON to change the plot — the drawing is redrawn on the way in.
+      return `  <div ${attrs} data-element="plot" ${plotDataAttr(plotSpecOf(element))}`
+        + ` ${styleAttr(position, inline)}>`
+        + `${notAnObject(plotSvg(element, element.w, element.h, element.id))}</div>`;
     case 'unsupported':
       // An import gap, described well enough to be fixed: replace this element
       // with real markup and it becomes a real object on the way back.
@@ -1206,6 +1227,60 @@ function elementToHtml(element: SlideElement, build?: TimelineEntry): string {
     default:
       return `  <div ${attrs} data-element="html" ${styleAttr(position, inline)}>`
         + `${'html' in element ? element.html : ''}</div>`;
+  }
+}
+
+/**
+ * Write a plot description as a `data-plot` attribute.
+ *
+ * Single-quoted so the JSON inside stays readable and hand-editable; only the
+ * characters that would end the attribute or the tag are escaped.
+ */
+export function plotDataAttr(spec: PlotSpec): string {
+  const json = JSON.stringify(spec)
+    .replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `data-plot='${json}'`;
+}
+
+/**
+ * Return ready-to-paste authoring markup for a plot of a given size.
+ *
+ * Args:
+ *     spec: The plot to draw.
+ *     size: The box to draw it in, in canvas pixels.
+ *
+ * Returns:
+ *     A `<div data-element="plot">` carrying the description and its drawing.
+ */
+export function plotAuthoringMarkup(spec: PlotSpec, size: { w: number; h: number }): string {
+  return `<div data-element="plot" ${plotDataAttr(spec)}`
+    + ` style="width:${size.w}px; height:${size.h}px;">`
+    + `${notAnObject(plotSvg(spec, size.w, size.h))}</div>`;
+}
+
+/** Read `data-plot`: JSON as written, or URI-encoded JSON. */
+function plotSpecFrom(encoded: string | undefined, deck?: Deck): PlotSpec {
+  const text = (encoded ?? '').trim();
+
+  if (!text) return completePlotSpec({}, deck);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.startsWith('{') ? text : decodeURIComponent(text));
+  } catch {
+    throw new HtmlAuthoringError(
+      'data-plot is not valid JSON. Write it single-quoted, e.g. '
+      + `data-plot='{"xValues":[1,2,3],"series":[{"name":"loss","values":[3,2,1]}]}'`,
+    );
+  }
+
+  try {
+    return completePlotSpec(parsed, deck);
+  } catch (error) {
+    const detail = error instanceof ZodError
+      ? error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
+      : String(error);
+    throw new HtmlAuthoringError(`data-plot does not describe a plot (${detail})`);
   }
 }
 

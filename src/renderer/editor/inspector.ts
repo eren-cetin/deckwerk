@@ -1,4 +1,6 @@
 import type { Deck, MediaEffect, Slide, SlideElement } from '@shared/deck.js';
+import { PLOT_LEGEND_POSITIONS } from '@shared/deck.js';
+import { PLOT_LEGEND_LABELS, plotSeriesColor } from '@shared/plot.js';
 import { captionOf, createCaption, isCaptionable } from '@shared/captions.js';
 import {
   applyListStyleToHtml,
@@ -113,6 +115,8 @@ export class Inspector {
   /** Play/pause the video on the editing canvas; returns the new playing state. */
   onTogglePlay?: (elementId: string) => boolean;
   /** Run or stop a web element's page on the canvas; returns whether it is live now. */
+  /** Open the plot dialog on a plot element. */
+  onEditPlot?: (elementId: string) => void;
   onToggleWebLive?: (elementId: string) => boolean;
   /** Whether a web element's page is running on the canvas right now. */
   isWebLive?: (elementId: string) => boolean;
@@ -2041,6 +2045,84 @@ export class Inspector {
         return wrap;
       }
 
+      case 'plot': {
+        const wrap = typeSections();
+        const data = optionSection('Plot', 'plot-data-options', `${el.series.length} series · ${el.xValues.length} rows`);
+        const edit = button('Edit data…', () => this.onEditPlot?.(el.id));
+        edit.title = 'Edit the data, labels and axes (or double-click the plot)';
+        data.content.appendChild(edit);
+        data.content.appendChild(
+          segmentedSelectField('Type', [
+            { value: 'line', title: 'Line plot', text: 'Line' },
+            { value: 'bar', title: 'Bar plot', text: 'Bars' },
+          ], el.kind, (v) =>
+            this.store.updateSelected((e) => {
+              if (e.type === 'plot') e.kind = v as 'line';
+            }, { label: 'Change plot type' })),
+        );
+        wrap.appendChild(data.section);
+
+        const series = optionSection('Series', 'plot-series-options');
+        el.series.forEach((item, index) => {
+          series.content.appendChild(
+            colorField(item.name || `Series ${index + 1}`, item.color, (v) => {
+              this.store.updateSelected((e) => {
+                if (e.type === 'plot' && e.id === el.id && e.series[index]) {
+                  e.series[index].color = v ?? plotSeriesColor(index);
+                }
+              }, { label: 'Change series colour' });
+            }, { clear: { kind: 'none', label: 'Default colour' } }),
+          );
+        });
+        wrap.appendChild(series.section);
+
+        const style = optionSection('Style', 'plot-style-options');
+        const legends = PLOT_LEGEND_POSITIONS.map((position) => PLOT_LEGEND_LABELS[position]);
+        style.content.appendChild(
+          selectField('Legend', legends, PLOT_LEGEND_LABELS[el.legend], (v) =>
+            this.store.updateSelected((e) => {
+              if (e.type === 'plot') e.legend = PLOT_LEGEND_POSITIONS[legends.indexOf(v)] ?? e.legend;
+            }, { label: 'Move plot legend' })),
+        );
+        const sizes = document.createElement('div');
+        sizes.className = 'field-grid field-grid-2';
+        sizes.append(
+          numberField('Text size', el.textSize, (v) =>
+            this.store.updateSelected((e) => {
+              if (e.type === 'plot') e.textSize = clamp(v, 6, 120);
+            }, { label: 'Change plot text size' })),
+        );
+
+        // Stroke width and markers belong to lines; bars have neither.
+        if (el.kind === 'line') {
+          sizes.append(
+            numberField('Line width', el.lineWidth, (v) =>
+              this.store.updateSelected((e) => {
+                if (e.type === 'plot') e.lineWidth = clamp(v, 0.5, 24);
+              }, { label: 'Change plot line width' }), { step: 0.5 }),
+          );
+        }
+
+        style.content.appendChild(sizes);
+        style.content.appendChild(
+          checkboxField('Grid lines', el.grid, (v) =>
+            this.store.updateSelected((e) => {
+              if (e.type === 'plot') e.grid = v;
+            }, { label: 'Toggle plot grid' })),
+        );
+        if (el.kind === 'line') {
+          style.content.appendChild(
+            checkboxField('Point markers', el.markers, (v) =>
+              this.store.updateSelected((e) => {
+                if (e.type === 'plot') e.markers = v;
+              }, { label: 'Toggle plot markers' })),
+          );
+        }
+
+        wrap.appendChild(style.section);
+        return wrap;
+      }
+
       case 'html': {
         const wrap = typeSections();
         const markup = optionSection('Markup', 'html-markup-options');
@@ -2835,7 +2917,7 @@ function textAreaField(
   return wrap;
 }
 
-function checkboxField(
+export function checkboxField(
   label: string,
   value: boolean,
   onChange: (v: boolean) => void,
@@ -2857,7 +2939,7 @@ function checkboxField(
  * words; anything that needs explaining goes in `caption`, a short muted note
  * on the heading line, so a sentence never sits in a label slot.
  */
-function optionSection(
+export function optionSection(
   title: string,
   contentClass: string,
   caption?: string,
@@ -2901,7 +2983,7 @@ function mixedCheckboxField(
   return wrap;
 }
 
-function selectField(
+export function selectField(
   label: string,
   options: string[],
   value: string,
@@ -3088,7 +3170,7 @@ function listIndentField(indents: number[], onChange: (indent: number) => void):
   return wrap;
 }
 
-function segmentedSelectField(
+export function segmentedSelectField(
   label: string,
   choices: Array<{ value: string; title: string; icon?: string; text?: string }>,
   value: string,

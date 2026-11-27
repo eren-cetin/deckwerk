@@ -13,7 +13,8 @@ import {
   type ComputedSlideScene,
 } from '@shared/agent.js';
 import { deckOutline, deckStyleDigest } from '@shared/deckDigest.js';
-import { slidesToHtml } from '@shared/htmlSlides.js';
+import { plotAuthoringMarkup, slidesToHtml } from '@shared/htmlSlides.js';
+import { PLOT_DEFAULT_SIZE, completePlotSpec } from '@shared/plot.js';
 import { capabilities } from '@shared/capabilities.js';
 import { PLAYER_TYPE_CSS } from '@shared/playerTypeCss.js';
 import { CustomThemeSchema, parseDeck, type Comment, type Deck, type Slide, type SlideElement } from '@shared/deck.js';
@@ -138,6 +139,11 @@ Everything else:
                                           page — scripts and all — live in a
                                           sandboxed frame (a Claude artifact,
                                           an interactive chart, a demo)
+  plot [deck] <spec.json> [--size <WxH>]  a line or bar plot from data, in the
+                                          deck's plot style: prints the markup
+                                          (a data-element="plot" box with its
+                                          drawing) to paste into an authoring
+                                          page; the plot stays editable
   web add <deck> <page.html> [--size <WxH>] [--title <text>]
                                           stage a page as an asset — no slide —
                                           checked and with a poster at the box
@@ -244,6 +250,8 @@ export async function runAgentCli(argv: string[], io: CliIo): Promise<number> {
         return await assetCommand(rest, io);
       case 'web':
         return await webCommand(rest, io);
+      case 'plot':
+        return await plotCommand(rest, io);
       case 'theme':
         return await themeCommand(rest, io);
       case 'template':
@@ -605,9 +613,88 @@ function compactElement(element: SlideElement): Record<string, unknown> {
     return { ...common, src: element.src, poster: element.poster, interactive: element.interactive };
   }
   if (element.type === 'shape') return { ...common, shape: element.shape };
+  if (element.type === 'plot') {
+    return {
+      ...common, kind: element.kind, title: element.title,
+      series: element.series.map((series) => series.name), rows: element.xValues.length,
+    };
+  }
   return common;
 }
 
+
+/**
+ * `plot`: a plot description in, authoring markup out.
+ *
+ * Nothing is written to the deck. The reply's `markup` is one
+ * `data-element="plot"` box to paste into an `edit/*.html` page; saving that
+ * page is what adds the plot, as an object that stays editable in the app.
+ * The deck is only read, for the theme colours a description leaves unset.
+ */
+async function plotCommand(argv: string[], io: CliIo): Promise<number> {
+  const { flags, options, positional } = parseFlags(argv, ['size']);
+  ensureKnownFlags('plot', flags, []);
+  ensurePositionals('plot', positional, 2);
+
+  if (positional.length < 1) {
+    io.err('plot needs a JSON file describing the plot: slide-agent plot [deck] spec.json');
+    return EXIT_USAGE;
+  }
+
+  const specPath = resolve(io.cwd, positional[positional.length - 1]);
+
+  if (!existsSync(specPath)) {
+    io.err(`No such file: ${specPath}`);
+    return EXIT_ERROR;
+  }
+
+  const size = /^(\d+)x(\d+)$/.exec(options.get('size') ?? `${PLOT_DEFAULT_SIZE.w}x${PLOT_DEFAULT_SIZE.h}`);
+
+  if (!size) throw new UsageError(`--size takes WIDTHxHEIGHT, not "${options.get('size')}".`);
+
+  // Named, the deck must exist; unnamed, the current folder is used when it
+  // is a deck and the plot simply follows the slide's ink when it is not.
+  const deckDir = positional.length > 1
+    ? resolveDeckDir(positional[0], io)
+    : existsSync(join(io.cwd, DECK_FILE)) ? io.cwd : null;
+  const deck = deckDir ? await loadDeck(deckDir) : undefined;
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(specPath, 'utf8'));
+  } catch (error) {
+    io.err(`${specPath} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_ERROR;
+  }
+
+  const parsed = z.unknown().transform((value) => completePlotSpec(value, deck)).safeParse(raw);
+
+  if (!parsed.success) {
+    io.err(`${specPath} does not describe a plot:\n`
+      + parsed.error.issues.map((issue) => `  ${issue.path.join('.') || '(root)'}: ${issue.message}`).join('\n'));
+    return EXIT_ERROR;
+  }
+
+  const spec = parsed.data;
+  const box = { w: Number(size[1]), h: Number(size[2]) };
+  const longest = Math.max(0, ...spec.series.map((series) => series.values.length));
+  const problems = [
+    ...(spec.series.length === 0 ? ['no series: nothing will be drawn'] : []),
+    ...(spec.xValues.length === 0 ? ['no xValues: nothing will be drawn'] : []),
+    ...(longest > spec.xValues.length
+      ? [`a series has ${longest} values but there are ${spec.xValues.length} xValues; the extra values are not drawn`]
+      : []),
+  ];
+  io.out(json({
+    ok: problems.length === 0,
+    problems,
+    themed: Boolean(deck),
+    size: box,
+    spec,
+    markup: plotAuthoringMarkup(spec, box),
+  }));
+  return EXIT_OK;
+}
 
 async function renderCommand(argv: string[], io: CliIo): Promise<number> {
   const { flags, options, positional } = parseFlags(argv);

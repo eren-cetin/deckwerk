@@ -185,6 +185,9 @@ function similarity(a: SlideElement, b: SlideElement): number {
     }
     case 'html': return b.type === 'html' && a.html === b.html ? 100 : 0;
     case 'web': return b.type === 'web' && a.src === b.src ? 100 : 0;
+    // Identical plots were already paired by signature; two plots of the same
+    // kind are still the likeliest pair on consecutive slides of a build-up.
+    case 'plot': return b.type === 'plot' && a.kind === b.kind ? 60 : 0;
     case 'unsupported':
       return b.type === 'unsupported' && a.originalType === b.originalType &&
         a.note === b.note ? 90 : 0;

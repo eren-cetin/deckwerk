@@ -126,6 +126,8 @@ export function describeElement(el: SlideElement): string {
       return `${el.type}: ${el.src.split('/').pop()}`;
     case 'web':
       return `web page: ${el.title || el.src.split('/').pop()}`;
+    case 'plot':
+      return `${el.kind} plot${el.title ? `: ${el.title.slice(0, 40)}` : ''}`;
     case 'shape': {
       const name = SHAPE_NAMES[el.shape] ?? el.shape;
       // A shape's identity on the slide is its outline colour when it is a

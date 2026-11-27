@@ -1081,7 +1081,7 @@ export function withThemeBlock(css: string, block: string): string {
 }
 
 /** Parse #rgb/#rrggbb; null for anything else (rgba stays untouched). */
-function hexToRgb(hex: string): [number, number, number] | null {
+export function hexToRgb(hex: string): [number, number, number] | null {
   const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return null;
   let h = m[1];

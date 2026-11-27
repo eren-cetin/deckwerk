@@ -7,6 +7,7 @@ import { gateVideoLoad } from './mediaLoadGate.js';
 import { previewPosterProvider } from './previewPosterProvider.js';
 import { prepareSlideLinks } from './links.js';
 import { quadraticPath, shapeSvg } from '@shared/shapeSvg.js';
+import { plotSvg } from '@shared/plotSvg.js';
 import { isMediaBorderPaint, typedPropertyOwnsCss } from '@shared/nativeCss.js';
 import { applyTableColumnWidths } from '@shared/paragraphs.js';
 import { isEmbeddableWebSrc } from '@shared/webBridge.js';
@@ -239,6 +240,22 @@ export function syncShapeBody(
   const filter = (body as SVGElement).style.filter;
   if (filter) next.style.filter = filter;
   body.replaceWith(next);
+}
+
+/**
+ * Redraw a plot at its element's current size.
+ *
+ * A plot is laid out for its box -- margins and type keep their size and the
+ * data takes the rest -- so a resize needs a new drawing, for the same reason
+ * a shape's does. The editor calls this from its in-place geometry patch.
+ */
+export function syncPlotBody(
+  node: HTMLElement,
+  el: Extract<SlideElement, { type: 'plot' }>,
+): void {
+  const body = elementBody(node);
+  if (!body || body.tagName.toLowerCase() !== 'svg') return;
+  body.replaceWith(renderPlot(el));
 }
 
 /**
@@ -831,6 +848,9 @@ function renderBody(el: SlideElement, opts: RenderOptions): HTMLElement | SVGEle
     case 'web':
       return renderWeb(el, opts);
 
+    case 'plot':
+      return renderPlot(el);
+
     case 'unsupported': {
       // Visible on purpose: an import gap you can see and fix beats content
       // that vanished silently.
@@ -1142,6 +1162,13 @@ function renderVideo(
 function renderShape(el: Extract<SlideElement, { type: 'shape' }>): SVGElement {
   const template = document.createElement('template');
   template.innerHTML = shapeSvg(el);
+  return template.content.firstElementChild as SVGElement;
+}
+
+/** A plot, drawn by the same builder the exporter and the plot dialog use. */
+function renderPlot(el: Extract<SlideElement, { type: 'plot' }>): SVGElement {
+  const template = document.createElement('template');
+  template.innerHTML = plotSvg(el, el.w, el.h, el.id);
   return template.content.firstElementChild as SVGElement;
 }
 
