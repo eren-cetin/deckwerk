@@ -41,7 +41,7 @@ slide backgrounds, request only the matching named recipe:
 
     slide-agent capabilities builds morph morph-target
     slide-agent capabilities image crop mask media-frame video shapes groups
-    slide-agent capabilities text-roles lists auto-fit latex background background-image
+    slide-agent capabilities text-roles layouts lists auto-fit latex background background-image
     slide-agent capabilities comments web-element html-element plot
 
 A chart of numbers is a `plot`, not a hand-drawn SVG: write

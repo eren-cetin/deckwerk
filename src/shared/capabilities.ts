@@ -55,7 +55,8 @@ export function capabilities(): Capability[] {
       when: 'Every piece of text. Pick the role; let theme.css size it.',
       notes: [
         'role-title, role-heading, role-body, role-caption are the vocabulary.',
-        'An inline `style` overrides the theme and should be a deliberate one-off.',
+        'An inline `style` overrides the theme and should be a deliberate one-off: the next theme change replaces a font, size, weight or colour set on a box, keeping only emphasis on words inside it.',
+        'In a standalone authoring page, text without a role class is given one from its tag (h1 title, h2–h6 heading, figcaption caption) or, for prose, from a size near the body or caption role; what differs from the role is kept as an override and listed in apply’s `warnings` and in `themeDrift` from `validate`.',
         'contentStyle applies CSS to the inner text content rather than the positioned box; use it for glyph paint such as gradient text, text strokes and shadows.',
         'html may contain inline markup: <b>, <i>, <br>, <span>.',
         'paragraphSpacing (px) sets the gap between paragraphs and between bullets; unset keeps the theme default.',
@@ -413,13 +414,31 @@ export function capabilities(): Capability[] {
       ],
     },
     {
+      id: 'layouts',
+      what: 'A slide built on one of the deck’s layouts: the layout places the boxes and the theme styles them.',
+      when: 'Whenever a layout fits, which is most slides. A slide made of slots follows every later change to the layout or the theme; a slide of hand-placed boxes does not.',
+      notes: [
+        'On the `<section>`: `data-layout="standard"` (title + body), `"title"`, or the id of one of the deck’s own layouts. `style.layouts` in `slide-agent context` lists every layout with its slots.',
+        'On each box: `data-layout-slot` — `title`, `subtitle`, `body`, `caption`, numbered like `body-2` for columns. Write the words; the position, box, font, size and colour come from the layout and the theme, whatever the page’s own CSS says.',
+        '`slide-agent new [--layout <id>]` writes a page whose sections already carry the layout’s slots, each where the layout puts it.',
+        'A slot left out of the page is added as an empty prompt, which is hidden when presenting. Content that fits no slot is an ordinary box beside them: give it a role class, not inline type.',
+        'A layout may set its own font, weight or size on a placeholder (in the layout editor); that outranks the theme on every slide of the layout.',
+      ],
+      elements: [
+        text('cap-layout-title', 'Placed by the layout', TITLE, { class: ['role-title'], layoutPlaceholder: 'title' }),
+        text('cap-layout-body', 'The body slot: written as words, styled by the theme.', { x: 120, y: 252, w: 1680, h: 700 }, {
+          class: ['role-body'], layoutPlaceholder: 'body',
+        }),
+      ],
+    },
+    {
       id: 'background',
       what: 'A slide background colour, and the other slide-level properties.',
       when: 'Section dividers; hiding a slide; picking a geometry preset.',
       notes: [
         'A background image covers the canvas; text on it needs contrast.',
         "layout is a geometry preset — 'freeform' (default), 'standard' (title + body), 'title', or the id of one of the deck's own layouts (deck.customLayouts, made in the layout editor) — and themes may decorate it but never own its positions.",
-        "layoutMasterId and layoutPlaceholder are editor-maintained links between layout masters and their placeholders (slots 'title', 'subtitle', 'body', 'caption', numbered like 'body-2' for columns); ordinary authored elements should leave them unset.",
+        "layoutMasterId and layoutPlaceholder are the links between layout masters and their placeholders; in authored HTML name a layout and its slots instead (see the layouts capability) and never write these fields yourself.",
         'skipped: true keeps a slide in the deck and editable but steps over it when presenting. Use it instead of deleting a slide you may want back.',
         'notes is the presenter-view script for the slide; name is the label in the slide rail.',
         "sections group slides under named, foldable headers in the rail: deck.sections lists { id, name } (set with updateDeck), and a slide's section names the one it is in; a slide without one is in the section of the slide before it. In authored HTML a slide's section is data-section=\"<id>\"; outline entries in context name it.",

@@ -2,6 +2,7 @@ import type { AgentOperation } from './agent.js';
 import { LAYOUT_SLOT_PATTERN, MediaEffectSchema, MIRRORED_TEXT_STYLE_PROPERTIES } from './deck.js';
 import type { Deck, MediaEffect, PlotSpec, Slide, SlideElement, TimelineEntry } from './deck.js';
 import { ZodError } from 'zod';
+import { authoredTypeWarnings, settleAuthoredType, type AuthoredTypeFinding } from './authoredTextRoles.js';
 import { fitAutoTextElement } from './autoFit.js';
 import { KATEX_AUTO_RENDER_JS, KATEX_CSS, KATEX_JS } from './katexInline.js';
 import { shapeSvg } from './shapeSvg.js';
@@ -14,6 +15,7 @@ import {
   isBuiltInLayout,
   layoutChoices,
   layoutMaster,
+  promptCopy,
   slotRoleClass,
   syncSlideWithLayoutMaster,
 } from './layoutMasters.js';
@@ -97,6 +99,11 @@ export interface MeasuredSlide {
    * older compilers still loads.
    */
   warnings?: string[];
+  /**
+   * The page owned its CSS (see `authoringPageHtml`): its text carries what
+   * the browser computed rather than what the author wrote inline.
+   */
+  independent?: boolean;
 }
 
 const SCOPE_MARKER = 'slide-editor-scope:';
@@ -106,6 +113,48 @@ export const HTML_CHANGE_LABEL_META = 'deckwerk-change-label';
 const BLANK_SECTION = `<section class="slide" data-placeholder="true">
   <h1 class="role-title">Title</h1>
 </section>`;
+
+const SLOT_TAGS: Record<string, string> = { title: 'h1', subtitle: 'h2', caption: 'p' };
+
+/**
+ * A starter section on one of the deck's layouts: one box per placeholder,
+ * where the layout puts it and tagged with its slot, so a slide written by
+ * filling it in is placed by the layout and styled by the theme rather than
+ * by boxes and type its author invented.
+ *
+ * Args:
+ *     deck: The deck the slide is for.
+ *     layout: A built-in layout or the id of one of the deck's own.
+ *
+ * Returns:
+ *     The section's markup.
+ *
+ * Raises:
+ *     HtmlAuthoringError: If the deck has no such layout.
+ */
+export function layoutStarterSection(deck: Deck, layout: string): string {
+  if (!isBuiltInLayout(layout) && !customLayout(deck, layout)) {
+    const known = layoutChoices(deck).map((choice) => choice.id);
+    throw new HtmlAuthoringError(`Unknown layout "${layout}". Use ${known.join(', ')}.`);
+  }
+
+  const boxes = layoutMaster(deck, layout).elements
+    .filter((element): element is Extract<SlideElement, { type: 'text' }> =>
+      element.type === 'text' && Boolean(element.layoutPlaceholder))
+    .map((element) => {
+      const slot = element.layoutPlaceholder!;
+      const tag = SLOT_TAGS[slot.replace(/-\d+$/, '')] ?? 'div';
+      const prompt = promptCopy(slot);
+      // The box sits where the layout will put it, so the page looks like the
+      // slide in a browser; the layout decides the geometry again on import.
+      const box = `position:absolute; left:${element.x}px; top:${element.y}px; `
+        + `width:${element.w}px; height:${element.h}px; margin:0;`;
+      return `  <${tag} class="${slotRoleClass(slot)}" data-layout-slot="${slot}" `
+        + `data-prompt="${escape(prompt)}" style="${box}">${escape(prompt)}</${tag}>`;
+    });
+  return `<section class="slide" data-placeholder="true" data-layout="${escape(layout)}">\n`
+    + `${boxes.join('\n')}\n</section>`;
+}
 
 /**
  * A starter section nobody has touched yet. `slide-agent new > edit/add.html`
@@ -119,7 +168,14 @@ const BLANK_SECTION = `<section class="slide" data-placeholder="true">
 export function isPristinePlaceholder(root: Element): boolean {
   if ((root as HTMLElement).dataset?.placeholder !== 'true') return false;
   if (root.hasAttribute('data-slide-id')) return false;
-  const children = [...root.children];
+  const children = [...root.children] as HTMLElement[];
+  if (children.length === 0) return false;
+
+  // A starter box records its prompt; it is untouched while it still says it.
+  if (children.every((child) => child.dataset?.prompt !== undefined)) {
+    return children.every((child) => (child.textContent ?? '').trim() === child.dataset.prompt);
+  }
+
   return children.length === 1
     && children[0].tagName.toLowerCase() === 'h1'
     && (children[0].textContent ?? '').trim() === 'Title';
@@ -138,7 +194,16 @@ const BLANK_RULES = `<!--
   to the deck in this order.
 
   Add, remove and edit sections freely; open this file in a browser to see
-  exactly what the deck will get. After the first save each section is stamped
+  exactly what the deck will get.
+
+  Use what the deck already has. A section names its layout (data-layout) and
+  each box its slot (data-layout-slot): the layout places it and the theme
+  styles it, so write the words and leave position, font, size and colour
+  alone. Add a box of your own only when no slot fits, and give it a role
+  class (role-title, role-heading, role-body, role-caption) rather than
+  inline type; \`slide-agent context\` lists the deck's layouts and slots.
+
+  After the first save each section is stamped
   with the id it was given, and from then on this file governs those slides:
   editing one replaces it, and removing one deletes it.
 -->`;
@@ -188,6 +253,8 @@ export interface HtmlExportOptions {
    * it cannot replace or delete one, whatever is done to it.
    */
   blank?: number;
+  /** With `blank`: the starter section to repeat, instead of the bare one. */
+  blankSection?: string;
 }
 
 /**
@@ -213,7 +280,7 @@ export function slidesToHtml(
   const blank = options.blank ?? 0;
   const scope = encodeURIComponent(JSON.stringify(slides.map((slide) => slide.id)));
   const body = blank > 0
-    ? Array.from({ length: blank }, () => BLANK_SECTION).join('\n')
+    ? Array.from({ length: blank }, () => options.blankSection ?? BLANK_SECTION).join('\n')
     : slides.map((slide) => slideToHtml(slide, canvas)).join('\n');
   const title = blank > 0
     ? `${blank} new slide${blank === 1 ? '' : 's'}`
@@ -687,13 +754,32 @@ export function slidesFromMeasured(deck: Deck, measured: MeasuredSlide[]): Slide
   }
 
   return measured.map((slide, index) => {
+    // Before the layout sync: a slot's box takes its master's styling whole,
+    // so only the boxes the layout does not place are left to settle here.
+    const findings = new Map<string, AuthoredTypeFinding>();
     const built = slideFromMeasured(slide, {
       slideId: slide.id ?? nextSlideId(used, index),
       usedIds: used,
       deck,
+      findings,
     });
+    // Reported through the measurement's own warnings, which every compiler
+    // returns to the author once the slides are built. Only for boxes that are
+    // still the author's own afterwards: one the layout adopted as a
+    // placeholder is styled by its master, whatever the page said.
+    const report = (): void => {
+      const own = built.elements
+        .filter((element) => !(element.type === 'text' && element.layoutPlaceholder))
+        .flatMap((element) => findings.get(element.id) ?? []);
+      const warnings = authoredTypeWarnings(index + 1, own);
+      if (warnings.length > 0) slide.warnings = [...(slide.warnings ?? []), ...warnings];
+    };
     const layout = slide.layout;
-    if (layout === undefined) return built;
+    if (layout === undefined) {
+      report();
+      return built;
+    }
+
     if (!isBuiltInLayout(layout) && !customLayout(deck, layout)) {
       const known = layoutChoices(deck).map((choice) => choice.id);
       throw new HtmlAuthoringError(`Unknown data-layout "${layout}" on a slide. Use ${known.join(', ')}.`);
@@ -702,10 +788,16 @@ export function slidesFromMeasured(deck: Deck, measured: MeasuredSlide[]): Slide
     // title and body boxes (data-layout-slot, or a role class on an exported
     // page) become the master's placeholders, placed by the master and styled
     // by the deck's theme rather than by what the page's browser computed.
+    // An export writes the master's repeated objects out as ordinary markup,
+    // marked only by their class. They are the layout's, not the page's: the
+    // sync below adds them afresh under the same ids, so the ones that came
+    // back in with the page go first or every one would be there twice.
+    built.elements = built.elements.filter((element) => !element.class.includes('layout-master-element'));
     syncSlideWithLayoutMaster(built, layout, layoutMaster(deck, layout), {
       replaceStyle: true,
       forceBackground: !slide.ownBackground,
     });
+    report();
     return built;
   });
 }
@@ -722,7 +814,11 @@ function nextSlideId(used: Set<string>, index: number): string {
 /** Turn one measured slide into a deck slide, ids minted where absent. */
 export function slideFromMeasured(
   measured: MeasuredSlide,
-  opts: { slideId: string; usedIds: Set<string>; deck?: Deck },
+  opts: {
+    slideId: string; usedIds: Set<string>; deck?: Deck;
+    /** Filled with what settling each standalone text box found, by element id. */
+    findings?: Map<string, AuthoredTypeFinding>;
+  },
 ): Slide {
   const timeline: TimelineEntry[] = [];
   const elements: SlideElement[] = [];
@@ -731,6 +827,15 @@ export function slideFromMeasured(
     const id = uniqueId(node.elementId ?? `${opts.slideId}-${node.tag}-${index + 1}`, opts.usedIds);
     const element = elementFromNode(node, id, index + 1, opts.deck);
     if (!element) return;
+    // Text from a page that owned its CSS arrives as a full copy of its
+    // typography and no role. It is put on the deck's theme here; a layout
+    // slot is left alone, as its master styles it.
+    if (measured.independent && opts.deck && element.type === 'text' && !element.layoutPlaceholder
+      && !element.table) {
+      const finding = settleAuthoredType(element, node.tag, opts.deck);
+      opts.findings?.set(element.id, finding);
+    }
+
     elements.push(element);
     const build = buildFromNode(node, id, timeline.length);
     if (build) timeline.push(build);

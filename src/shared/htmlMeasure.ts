@@ -383,7 +383,14 @@ export function measureSlides(doc: Document): MeasuredSlide[] {
   // Mirrors isPristinePlaceholder in htmlSlides.ts.
   const pristinePlaceholder = (root: HTMLElement): boolean => {
     if (root.dataset.placeholder !== 'true' || root.hasAttribute('data-slide-id')) return false;
-    const children = [...root.children];
+    const children = [...root.children] as HTMLElement[];
+    if (children.length === 0) return false;
+
+    // A starter box records its prompt; it is untouched while it still says it.
+    if (children.every((child) => child.dataset.prompt !== undefined)) {
+      return children.every((child) => (child.textContent ?? '').trim() === child.dataset.prompt);
+    }
+
     return children.length === 1
       && children[0].tagName.toLowerCase() === 'h1'
       && (children[0].textContent ?? '').trim() === 'Title';
@@ -1215,8 +1222,14 @@ export function measureSlides(doc: Document): MeasuredSlide[] {
       elementId: node.dataset.elementId ?? null,
       // The structural classes are the renderer's to add, not the deck's to
       // store; only the author's own classes belong in the element.
-      classes: independent ? [] : [...node.classList].filter((name) =>
-        name !== 'slide' && name !== 'element' && !name.startsWith('element-')),
+      // A standalone page's own classes name rules in *its* stylesheet, which
+      // the deck never loads, so they go. The role classes are the deck's
+      // vocabulary and stay: dropping them left every box the author had
+      // tagged outside the theme's reach.
+      classes: independent
+        ? [...node.classList].filter((name) => /^role-(?:title|heading|body|caption|base)$/.test(name))
+        : [...node.classList].filter((name) =>
+          name !== 'slide' && name !== 'element' && !name.startsWith('element-')),
       dataset: { ...node.dataset } as Record<string, string>,
       rect: box,
       rotation,
@@ -1638,6 +1651,7 @@ export function measureSlides(doc: Document): MeasuredSlide[] {
         : {}),
       nodes,
       warnings,
+      ...(independent ? { independent: true } : {}),
     };
   });
 }

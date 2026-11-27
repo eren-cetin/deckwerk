@@ -170,11 +170,29 @@ leave it in and the file names one slide twice, which is refused.
 editor (the sync is one undo entry) before saving that file again. On a watched
 save the editor's status message says the same thing.
 
+`slide-agent validate` reports `themeDrift`: every text box the theme cannot
+fully style, because it names no role or sets a font, size, weight or colour
+of its own. Like `overflows` it is a checklist — a deliberate one-off shows up
+too — and an empty list means the slide follows the deck's design.
+
 `slide-agent validate` also reports `overflows`: every element whose authored
 box extends past the canvas, from geometry alone. Deliberate bleeds show up
 there too — the list is a checklist, not an error. Scope it to the slides you
 are actually editing with `--slide <id|number>` (repeatable, or comma-separated) or
 `--selected`; structural `errors` stay deck-wide either way.
+
+**Use the deck's layouts and text roles before anything else.** Name a layout
+on the `<section>` (`data-layout="standard"`, `"title"`, or one of the deck's
+own from `style.layouts` in `context`) and a slot on each box
+(`data-layout-slot="title"`, `body`, `body-2`, `caption`…): the layout places
+the box and the theme styles it, so the slide follows every later design
+change. `slide-agent new [--layout <id>]` writes sections that already carry
+the slots. Content that fits no slot is a box of your own with a role class
+(`role-title`, `role-heading`, `role-body`, `role-caption`) and no font, size
+or colour set on it. Text that names no role is given one from its tag or
+size, and anything that differs from the role is kept as an override — both
+are listed in `apply`'s `warnings` and under `themeDrift` in `validate`, and
+the next theme change replaces such overrides.
 
 **Write semantic markup; put reusable classes in `theme.css`.** The walk bakes
 layout from any CSS, keeps a dissolving container's paint (background, border,
@@ -479,7 +497,7 @@ Diagnostics go to stderr. Exit codes are `0` ok, `1` error,
 | `docs` | This guide |
 | `capabilities [ids...]` | Every feature (or just the named ones), with a working example, screenshot and markup |
 | `context [deck]` | What is selected, what revision is the deck, is the editor live |
-| `new [deck] [--count <n>]` | A blank authoring page — no ids, no scope, so saving it only adds slides |
+| `new [deck] [--count <n>] [--layout <id>]` | A blank authoring page on one of the deck's layouts — no ids, no scope, so saving it only adds slides |
 | `inspect [deck] [--selected\|--slide id\|number\|--all] [--html\|--dom]` | Editable HTML for the slides it names (saving it can replace and delete them), or computed inspection data |
 | `apply [deck] --html <file>` | Explicitly compile and sync an HTML range |
 | `render [deck] [--selected\|--slide id\|number\|--all] --output <dir> [--annotate] [--built] [--contact-sheet]` | Optional PNGs; `--contact-sheet` adds one tiled overview of everything rendered |

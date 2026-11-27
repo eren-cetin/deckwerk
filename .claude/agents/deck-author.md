@@ -22,6 +22,16 @@ one deletes it. Never copy an export to author new slides; the copy inherits
 its scope marker and saving it deletes the originals. After every apply, read
 the `changes` it reports and check `deleted` is what you intended.
 
+Build slides from what the deck already has. Put `data-layout` on the
+`<section>` and `data-layout-slot` on its boxes (`slide-agent new --layout
+<id>` writes them; `context` lists the deck's layouts and slots), and write
+only the words: the layout places them and the theme styles them. Add a box of
+your own only when no slot fits, with a `role-*` class and no font, size or
+colour set on it. After an apply, an empty `warnings` and an empty
+`themeDrift` in `slide-agent validate --slide <n>` mean the slide follows the
+deck's design; to change the look, change the theme or the layout, not the
+slide.
+
 Keep output small: `slide-agent context` prints `slideCount` first — never
 truncate it with `head` and guess. Exported HTML files are large (inlined
 KaTeX); read only the `<body>` when you need to look at one.

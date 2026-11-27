@@ -1129,8 +1129,13 @@ function isUntouchedBlankPage(html: string): boolean {
   const body = html.slice(bodyAt >= 0 ? bodyAt : 0);
   const sections = [...body.matchAll(/<section\b([^>]*)>([\s\S]*?)<\/section>/gi)];
   if (sections.length === 0) return false;
+  // A starter box records its prompt; it is untouched while it still says it.
+  const untouched = (inner: string): boolean => inner
+    .replace(/<([a-z][\w-]*)\b[^>]*\bdata-prompt="([^"]*)"[^>]*>([\s\S]*?)<\/\1>/gi,
+      (box, _tag, prompt: string, text: string) => (text.trim() === prompt ? '' : box))
+    .trim() === '';
   return sections.every(([, attrs, inner]) => !/data-slide-id=/.test(attrs)
-    && inner.trim() === '<h1 class="role-title">Title</h1>');
+    && (inner.trim() === '<h1 class="role-title">Title</h1>' || untouched(inner)));
 }
 
 function serializeDeck(deck: Deck): string {

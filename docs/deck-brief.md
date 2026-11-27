@@ -11,23 +11,23 @@ into editable slide objects. Don't read or edit `deck.json`.
     slide-agent render . --slide 8,9,10 --output /tmp/ctx     # PNGs
     slide-agent inspect . --html-body --slide 8,9,10          # their markup
 
-Slides are numbered as in the editor's rail. Match the neighbours' fonts,
-colours, margins and title position; `theme.css` holds the deck's styles.
+Slides are numbered as in the editor's rail. Match the neighbours by using
+the same layouts and text roles they use, not by copying their fonts or sizes.
 `slide-agent comments . --unresolved` shows requests people left on slides.
 
-## Themes
+## Use the deck's layouts and text roles first
 
-A theme sets the fonts, sizes and colours for text roles. Give text the class
-`role-title`, `role-heading`, `role-body` or `role-caption` and it takes the
-deck's theme; don't hard-code fonts or colours the theme already supplies.
-`slide-agent theme list .` prints every theme's title and body typefaces and
-its background, text, muted and accent colours (`chosen` is the deck's
-current one). To switch: `slide-agent theme apply . --id <id> --scope deck`.
-Layouts: `data-layout="standard"`, `"title"` or one of the deck's own (see
-`style.layouts` in `context`, with each one's slots) on a `<section>`, and
-`data-layout-slot` (`title`, `subtitle`, `body`, `body-2`…, `caption`) on its
-boxes; the layout places them and the theme styles them, so leave their
-position and type to DeckWerk.
+A layout places the boxes and the theme styles them, so slides built from
+them follow every later design change. Put `data-layout="standard"`, `"title"`
+or one of the deck's own on the `<section>` (`style.layouts` in `slide-agent
+context .` lists them and their slots) and `data-layout-slot` (`title`,
+`subtitle`, `body`, `body-2`…, `caption`) on its boxes; write the words and
+leave position and type to DeckWerk. Add a box of your own only when no slot
+fits, with class `role-title`, `role-heading`, `role-body` or `role-caption`
+and no font, size or colour of its own: apply's `warnings` and `themeDrift` in
+`slide-agent validate .` list text that does not follow the theme. To change
+the look, change the theme, not the slide: `slide-agent theme list .`, then
+`slide-agent theme apply . --id <id> --scope deck`.
 
 ## 2. Write your slide as a normal web page
 
@@ -39,13 +39,14 @@ Create `drafts/slide.html` — not in `edit/`, which the editor watches:
     <link rel="stylesheet" href="theme.css">
     <style> /* your CSS */ </style>
     </head><body>
-    <section class="slide" style="width:1920px;height:1080px;position:relative;overflow:hidden">
-      ...
+    <section class="slide" data-layout="standard" style="width:1920px;height:1080px;position:relative;overflow:hidden">
+      <h1 data-layout-slot="title">…</h1>
+      <div data-layout-slot="body">…</div>
     </section>
     </body></html>
 
-Use any HTML and CSS: flex/grid, `<img>`, `object-fit`, `border-radius`,
-`clip-path`, gradients, SVG. Put images in `assets/` (or run
+Beside the slots, use any HTML and CSS: flex/grid, `<img>`, `object-fit`,
+`border-radius`, gradients, SVG. Put images in `assets/` (or run
 `slide-agent asset import . <file>`) and refer to them as `assets/<name>`.
 Iterate in a browser, e.g. `chromium --headless --screenshot=/tmp/s.png
 --window-size=1920,1080 drafts/slide.html`. Nothing here involves DeckWerk.
@@ -66,8 +67,7 @@ its id (from `inspect --html-body`) onto your `<section>` before applying.
 To delete or reorder slides, `slide-agent inspect . --html --slide 8,9 >
 edit/work.html`, then remove or reorder the `<section>`s there and save.
 
-Check `changes` in apply's output: a `deleted` entry you did not intend
-means stop and undo in the editor.
+Check apply's `changes`: a `deleted` you did not intend means undo in the editor.
 
 ## 4. Check and iterate
 

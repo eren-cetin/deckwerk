@@ -372,7 +372,7 @@ describe('slide-agent CLI', { timeout: 60_000 }, () => {
 
     // Edited, each section is a new slide.
     let n = 0;
-    const authored = page.stdout.replace(/<h1 class="role-title">Title<\/h1>/g, () => `<h1 class="role-title">New ${++n}</h1>`);
+    const authored = page.stdout.replace(/>Slide title<\/h1>/g, () => `>New ${++n}</h1>`);
     await writeFile(join(dir, 'edit', 'add.html'), authored, 'utf8');
     const applied = await parsed('apply', '--html', join(dir, 'edit', 'add.html'));
     expect(applied.code).toBe(EXIT_OK);

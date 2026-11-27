@@ -192,8 +192,11 @@ async function main(argv) {
       out(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
       return EXIT_OK;
     case 'new': {
-      const { options } = parseArgs(rest, ['count']);
-      out(await api('/api/agent-mirror/new.html', { count: options.get('count') ?? '1' }));
+      const { options } = parseArgs(rest, ['count', 'layout']);
+      out(await api('/api/agent-mirror/new.html', {
+        count: options.get('count') ?? '1',
+        ...(options.get('layout') ? { layout: options.get('layout') } : {}),
+      }));
       return EXIT_OK;
     }
     case 'inspect': {

@@ -49,6 +49,7 @@ import {
   htmlSyncHistoryLabel,
   htmlSyncOperations,
   htmlSyncSummary,
+  layoutStarterSection,
   slidesToHtml,
 } from '../shared/htmlSlides.js';
 import { PLAYER_TYPE_CSS } from '../shared/playerTypeCss.js';
@@ -2038,7 +2039,18 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
       if (!Number.isInteger(count) || count < 1 || count > 50) {
         return respondJson(response, 400, { error: 'count takes a whole number of slides from 1 to 50' });
       }
-      const html = slidesToHtml([], room.session.deck.canvas, { typeCss: PLAYER_TYPE_CSS, base: '../', blank: count });
+      // Starter sections sit on one of the deck's layouts, as `slide-agent new`
+      // writes them, so a mirrored agent fills in slots instead of inventing boxes.
+      let blankSection: string;
+      try {
+        blankSection = layoutStarterSection(room.session.deck, url.searchParams.get('layout') ?? 'standard');
+      } catch (error) {
+        return respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+
+      const html = slidesToHtml([], room.session.deck.canvas, {
+        typeCss: PLAYER_TYPE_CSS, base: '../', blank: count, blankSection,
+      });
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       response.end(html);
       return;

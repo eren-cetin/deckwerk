@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { emptyDeck } from '../src/shared/deck.js';
-import { isPristinePlaceholder, slidesToHtml } from '../src/shared/htmlSlides.js';
+import { isPristinePlaceholder, layoutStarterSection, slidesToHtml } from '../src/shared/htmlSlides.js';
 import { PLAYER_TYPE_CSS } from '../src/shared/playerTypeCss.js';
 
 /**
@@ -19,6 +19,27 @@ describe('untouched starter sections', () => {
     const sections = [...parse(page).querySelectorAll('section.slide')];
     expect(sections).toHaveLength(3);
     expect(sections.every((section) => isPristinePlaceholder(section))).toBe(true);
+  });
+
+  it('start on a layout, one box per slot, and are pristine until a box is written in', () => {
+    const deck = emptyDeck();
+    const starter = layoutStarterSection(deck, 'standard');
+    const page = slidesToHtml([], deck.canvas, { blank: 2, blankSection: starter });
+    const sections = [...parse(page).querySelectorAll<HTMLElement>('section.slide')];
+    expect(sections).toHaveLength(2);
+    expect(sections[0].dataset.layout).toBe('standard');
+    expect([...sections[0].children].map((box) => [
+      box.tagName.toLowerCase(), box.className, (box as HTMLElement).dataset.layoutSlot, box.textContent,
+    ])).toEqual([
+      ['h1', 'role-title', 'title', 'Slide title'],
+      ['div', 'role-body', 'body', 'Body text'],
+    ]);
+    expect(sections.every((section) => isPristinePlaceholder(section))).toBe(true);
+
+    sections[0].children[0].textContent = 'Results';
+    expect(isPristinePlaceholder(sections[0])).toBe(false);
+    expect(isPristinePlaceholder(sections[1])).toBe(true);
+    expect(() => layoutStarterSection(deck, 'no-such-layout')).toThrow(/Unknown layout/);
   });
 
   it('stop being pristine the moment their content changes, attribute or not', () => {

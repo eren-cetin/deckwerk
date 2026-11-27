@@ -291,7 +291,7 @@ describe('slide-agent connect', { timeout: 120_000 }, () => {
     const page = await cli('new', mirrorDir);
     expect(page.code).toBe(EXIT_OK);
     const file = join(mirrorDir, 'edit', 'add.html');
-    await writeFile(file, page.stdout.replace('<h1 class="role-title">Title</h1>', '<h1 class="role-title">Added live</h1>'), 'utf8');
+    await writeFile(file, page.stdout.replace('>Slide title</h1>', '>Added live</h1>'), 'utf8');
     const grown = await until(async () => {
       const deck = await serverDeck();
       return deck.slides.length === 3 ? deck : null;
@@ -591,7 +591,7 @@ describe('slide-agent connect', { timeout: 120_000 }, () => {
     await writeFile(file, page, 'utf8');
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 1200));
     expect((await serverDeck()).slides).toHaveLength(2);
-    await writeFile(file, page.replace('<h1 class="role-title">Title</h1>', '<h1 class="role-title">From ./deck</h1>'), 'utf8');
+    await writeFile(file, page.replace('>Slide title</h1>', '>From ./deck</h1>'), 'utf8');
     const result = JSON.parse(await deck('apply', '--html', 'edit/add.html')) as { changes: { inserted: string[] } };
     expect(result.changes.inserted).toHaveLength(1);
     const again = JSON.parse(await deck('apply', '--html', 'edit/add.html')) as { changes: { inserted: string[] }; idempotent?: boolean };

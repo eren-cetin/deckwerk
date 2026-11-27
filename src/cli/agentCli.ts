@@ -13,7 +13,7 @@ import {
   type ComputedSlideScene,
 } from '@shared/agent.js';
 import { deckOutline, deckStyleDigest } from '@shared/deckDigest.js';
-import { plotAuthoringMarkup, slidesToHtml } from '@shared/htmlSlides.js';
+import { HtmlAuthoringError, layoutStarterSection, plotAuthoringMarkup, slidesToHtml } from '@shared/htmlSlides.js';
 import { PLOT_DEFAULT_SIZE, completePlotSpec } from '@shared/plot.js';
 import { capabilities } from '@shared/capabilities.js';
 import { PLAYER_TYPE_CSS } from '@shared/playerTypeCss.js';
@@ -30,6 +30,7 @@ import {
   themeById,
   themeCss,
   THEME_BLOCK_END,
+  THEME_TEXT_PROPERTIES,
   THEME_BLOCK_START,
   themeIssues,
   themeMode,
@@ -100,9 +101,13 @@ const USAGE = `usage: slide-agent <command> [options]
 The loop — edit HTML, the editor syncs it back:
 
   context   [deck] [--around <slide>]     the outline, optionally target ±1
-  new       [deck] [--count <n>]          a blank authoring page: the same
+  new       [deck] [--count <n>] [--layout <id>]
+                                          a blank authoring page: the same
                                           skeleton, with no slide ids and no
-                                          scope, so saving it only ADDS slides
+                                          scope, so saving it only ADDS slides.
+                                          Its sections start on a deck layout
+                                          (default standard) with one box per
+                                          slot; see style.layouts in context
   inspect   [deck] --html [--selected|--slide id|number|--all]
                                           create a scoped authoring page —
                                           editing a section replaces its slide,
@@ -496,7 +501,7 @@ async function applyCommand(argv: string[], io: CliIo): Promise<number> {
  * the same skeleton with nothing to inherit.
  */
 async function newCommand(argv: string[], io: CliIo): Promise<number> {
-  const { flags, options, positional } = parseFlags(argv, ['count']);
+  const { flags, options, positional } = parseFlags(argv, ['count', 'layout']);
   ensureKnownFlags('new', flags, []);
   ensurePositionals('new', positional, 1);
   const deckDir = resolveDeckDir(positional[0], io);
@@ -506,10 +511,20 @@ async function newCommand(argv: string[], io: CliIo): Promise<number> {
     throw new UsageError(`--count takes a whole number of slides from 1 to 50, not "${raw}".`);
   }
   const deck = await loadDeck(deckDir);
+  let blankSection: string;
+  try {
+    blankSection = layoutStarterSection(deck, options.get('layout') ?? 'standard');
+  } catch (error) {
+    if (error instanceof HtmlAuthoringError) throw new UsageError(error.message);
+
+    throw error;
+  }
+
   io.out(slidesToHtml([], deck.canvas, {
     typeCss: PLAYER_TYPE_CSS,
     base: '../',
     blank: count,
+    blankSection,
   }));
   return EXIT_OK;
 }
@@ -836,12 +851,34 @@ async function validateCommand(argv: string[], io: CliIo): Promise<number> {
   } catch {
     // The parse failure is already represented in `errors`.
   }
+  // Text the theme cannot reach or that carries type of its own: no role
+  // class, or a font, size, weight or colour set on the box. A checklist like
+  // `overflows` — a deliberate one-off shows up here too — and the place an
+  // agent sees that its slide will not follow the deck's theme.
+  let themeDrift: Array<{ slideId: string; elementId: string; role: string | null; own: string[] }> = [];
+  try {
+    const deck = await loadDeck(deckDir);
+    themeDrift = deck.slides.flatMap((slide) => slide.elements.flatMap((element) => {
+      if (element.type !== 'text' || element.layoutMasterId) return [];
+
+      const role = element.class.find((name) => /^role-(?:title|heading|body|caption|base)$/.test(name)) ?? null;
+      const own = THEME_TEXT_PROPERTIES.filter((property) =>
+        element.style[property] !== undefined || element.contentStyle?.[property] !== undefined);
+      return role !== null && own.length === 0
+        ? []
+        : [{ slideId: slide.id, elementId: element.id, role: role?.slice(5) ?? null, own: [...own] }];
+    }));
+  } catch {
+    // The parse failure is already represented in `errors`.
+  }
+
   if (wanted) {
     const filter = wanted;
     const keep = (slideId: string): boolean =>
       filter({ id: slideId, index: 0, selected: selectedSlideIds.includes(slideId), active: false });
     importGaps = importGaps.filter((gap) => keep(gap.slideId));
     overflows = overflows.filter((overflow) => keep(overflow.slideId));
+    themeDrift = themeDrift.filter((drift) => keep(drift.slideId));
   }
 
   io.out(jsonCompactArrays(
@@ -852,8 +889,9 @@ async function validateCommand(argv: string[], io: CliIo): Promise<number> {
       errors,
       importGaps,
       overflows,
+      themeDrift,
     },
-    ['overflows'],
+    ['overflows', 'themeDrift'],
   ));
   return errors.length === 0 ? EXIT_OK : EXIT_ERROR;
 }
