@@ -2354,8 +2354,11 @@ describe('theming through the panel, the rail and the inspector', () => {
       }
       expect(text.contentStyle).toBeUndefined();
       expect(text.html).not.toMatch(/font-size:\s*\d+px/);
-      expect(text.html).not.toMatch(/color:/);
     }
+    // One word marked out in the title is the author's emphasis, not the
+    // box's type: its colour and weight stay while its fixed size goes.
+    expect(textOf(store, 'title').html).toContain('<span style="color: #ff0000; font-weight: 700">Deck</span>');
+    expect(textOf(store, 'body').html).not.toMatch(/color:/);
     // The superscript keeps its relative size: it scales with the box.
     expect(textOf(store, 'title').html).toContain('font-size: 0.68em');
 
@@ -2427,7 +2430,7 @@ describe('theming through the panel, the rail and the inspector', () => {
     expect(textOf(store, 'title').html).toContain('font-size: 0.68em');
   });
 
-  it('changes a theme size for new slides only: applied slides keep theirs', () => {
+  it('changes a theme size for every slide on Done, new and existing', () => {
     const { store, canvasHost, inspectorHost, panel, railHost } = themedSetup([[textElement('title', IMPORTED_TITLE)]]);
     chooseCard(panel.element, 'editorial');
     tickEveryProperty(panel.element);
@@ -2445,12 +2448,15 @@ describe('theming through the panel, the rail and the inspector', () => {
     panelButton(panel.element, 'Done').click();
     expect(store.get().deck.themeStyle?.fonts.title.size).toBe(60);
 
-    // The applied slide did not move: it now carries the size it had, and the
-    // inspector shows that as the box's own value.
-    expect(computed(canvasHost, 'title').fontSize).toBe(`${before}px`);
+    // The slide follows at once, and the inspector shows the size as the
+    // theme's, not as a copy the box carries.
+    expect(computed(canvasHost, 'title').fontSize).toBe('60px');
+    // The app re-reads Props when the stylesheet changes; here a fresh
+    // selection does the same.
+    store.select([]);
     store.select(['title']);
-    expect(sizeInput(inspectorHost).value).toBe(String(before));
-    expect(themeMark(sizeField(inspectorHost))).toBeNull();
+    expect(sizeInput(inspectorHost).value).toBe('60');
+    expect(themeMark(sizeField(inspectorHost))).toBe('(Theme)');
 
     // A slide added from the rail is born at the new size, on the cascade.
     [...railHost.querySelectorAll<HTMLButtonElement>('button')]
@@ -2461,11 +2467,8 @@ describe('theming through the panel, the rail and the inspector', () => {
     expect(fresh.style['font-size']).toBeUndefined();
     expect(computed(canvasHost, fresh.id).fontSize).toBe('60px');
 
-    // Applying the theme to the first slide again moves it to the new size.
     store.selectSlide(0);
-    applyTheme(panel.element, 'slide');
     expect(textOf(store, 'title').style['font-size']).toBeUndefined();
-    expect(computed(canvasHost, 'title').fontSize).toBe('60px');
   });
 
   it('changes a theme weight and typeface the same way', () => {

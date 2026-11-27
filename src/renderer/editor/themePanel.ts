@@ -154,19 +154,22 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
   const { store, cssEditor, save, setStatusMessage } = deps;
 
   const themeAdoption: ThemeAdoption = {
-    scope: 'slides',
+    // The whole deck unless slides are picked: an Apply that reached only the
+    // slide being looked at read as an Apply that had not worked.
+    scope: 'deck',
     roles: ['title', 'heading', 'body', 'caption'],
-    // A family and the weight it is set in are one decision: "Typography".
+    // A face, its weight and its size are one decision: "Typography".
     fontFamily: true,
     fontWeight: true,
-    typeScale: false,
+    typeScale: true,
     // Text colour, the slide ground and shape colours are one decision: "Colour".
     textColor: false,
     background: false,
     objectColors: false,
+    // Untagged text is given a role and hand-set type is replaced, always
+    // (the defaults of adoptThemeStyles): both used to be boxes to tick, and
+    // an Apply without them changed nothing on most decks.
     replaceOverrides: true,
-    detectRoles: false,
-    replaceAuthored: false,
   };
 
   /** The gallery selection can lead the installed deck theme until Apply/Install. */
@@ -339,7 +342,7 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
     const count = store.get().slideSelection.size;
     return themeAdoption.scope === 'deck'
       ? 'Apply theme to deck'
-      : themeAdoption.scope === 'slides'
+      : themeAdoption.scope === 'slides' && count > 0
         ? `Apply theme to ${count} selected slide${count === 1 ? '' : 's'}`
         : themeAdoption.scope === 'selection'
           ? 'Apply theme to selected objects'
@@ -408,7 +411,7 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
         const parts = [plural(changes.boxes, 'box') + ' restyled'];
         if (themeAdoption.background) parts.push(plural(changes.backgrounds, 'background'));
         themeReadout.textContent = changes.boxes + changes.backgrounds === 0
-          ? 'Installs the theme; nothing on these slides changes.'
+          ? `Nothing to change: ${themeAdoption.scope === 'deck' ? 'every slide' : 'these slides'} already follow${themeAdoption.scope === 'deck' ? 's' : ''} this theme.`
           : parts.join(', ');
       }
     }
@@ -457,9 +460,9 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
     notifyThemePreview();
     const scopeName = themeAdoption.scope === 'deck'
       ? 'deck defaults and existing slides'
-      : themeAdoption.scope === 'slides'
+      : themeAdoption.scope === 'slides' && slideSelection.size > 0
         ? `${slideSelection.size} selected slide${slideSelection.size === 1 ? '' : 's'}`
-        : themeAdoption.scope === 'slide' ? 'current slide' : 'selection';
+        : themeAdoption.scope === 'selection' ? 'selection' : 'current slide';
     setStatusMessage(`Used selected “${theme.name}” styles for ${scopeName}.`);
   }
 
@@ -733,16 +736,15 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
     });
     scopeLabel.append(scopeTitle, scope);
 
-    // Heading rides along with Title: headings are what imports and agents tag,
-    // not a role authors pick, so it gets no box of its own.
+    // Heading has a box of its own: it is what imports and agents tag slide
+    // headings with, and hiding it behind Title left those slides unreachable.
     const roleTitle = groupLabel('Text roles');
-    const roleBoxes = (['title', 'body', 'caption'] as const).map((role) => {
+    const roleBoxes = (['title', 'heading', 'body', 'caption'] as const).map((role) => {
       const box = optionBox(role[0].toUpperCase() + role.slice(1), themeAdoption.roles.includes(role));
       box.input.addEventListener('change', () => {
-        const covered: ThemeTextRole[] = role === 'title' ? ['title', 'heading'] : [role];
         themeAdoption.roles = box.input.checked
-          ? [...new Set([...themeAdoption.roles, ...covered])]
-          : themeAdoption.roles.filter((candidate) => !covered.includes(candidate));
+          ? [...new Set<ThemeTextRole>([...themeAdoption.roles, role])]
+          : themeAdoption.roles.filter((candidate) => candidate !== role);
         renderReadouts();
       });
       return box.label;
@@ -750,21 +752,12 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
 
     const propertyTitle = groupLabel('Properties from theme');
     const propertyBoxes: Array<[string, string, string, () => boolean, (on: boolean) => void]> = [
-      ['typography', 'Typography', 'family, weight',
+      ['typography', 'Typography', 'typeface, weight, size, spacing',
         () => themeAdoption.fontFamily,
-        (on) => { themeAdoption.fontFamily = on; themeAdoption.fontWeight = on; }],
-      ['typeScale', 'Type scale', 'size, spacing',
-        () => themeAdoption.typeScale,
-        (on) => { themeAdoption.typeScale = on; }],
+        (on) => { themeAdoption.fontFamily = on; themeAdoption.fontWeight = on; themeAdoption.typeScale = on; }],
       ['colour', 'Colour', 'text, background, shapes',
         () => themeAdoption.textColor,
         (on) => { themeAdoption.textColor = on; themeAdoption.background = on; themeAdoption.objectColors = on; }],
-      ['detectRoles', 'Detect roles for untagged text', '',
-        () => themeAdoption.detectRoles,
-        (on) => { themeAdoption.detectRoles = on; }],
-      ['replaceAuthored', 'Replace my manual changes', 'sizes, fonts, colours set by hand',
-        () => themeAdoption.replaceAuthored ?? false,
-        (on) => { themeAdoption.replaceAuthored = on; }],
     ];
     const propertyEls = propertyBoxes.map(([key, label, sub, read, write]) => {
       const box = optionBox(label, read(), sub);
@@ -941,31 +934,26 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
   }
 
   /**
-   * Tick an Apply option the way a click would, so its readout and the
-   * Apply button's dry run follow.
+   * What an edit from `before` to `after` has to carry onto existing slides:
+   * which roles changed their type, and whether any colour moved.
    */
-  function tickAdoption(group: string): void {
-    const input = element?.querySelector<HTMLInputElement>(`input[data-group="${group}"]`);
-    if (!input || input.checked) return;
-    input.checked = true;
-    input.dispatchEvent(new Event('change'));
-  }
-
-  /**
-   * Which Apply options carry an edit from `before` to `after`: an edited
-   * size has to reach existing slides through Type scale, a face through
-   * Typography, a colour through Colour.
-   */
-  function editedAdoptionGroups(before: ThemeStyle, after: ThemeStyle): string[] {
-    const roles = Object.keys(after.fonts) as Array<keyof ThemeStyle['fonts']>;
+  function editedAdoption(before: ThemeStyle, after: ThemeStyle): {
+    roles: ThemeTextRole[]; typography: boolean; colour: boolean;
+  } {
+    const all = Object.keys(after.fonts) as ThemeTextRole[];
     const differs = (pick: (style: ThemeStyle) => unknown) => JSON.stringify(pick(before)) !== JSON.stringify(pick(after));
-    const groups: string[] = [];
-    if (differs((style) => roles.map((role) => [style.fonts[role].family, style.fonts[role].weight]))) groups.push('typography');
-    if (differs((style) => roles.map((role) => [style.fonts[role].size, style.fonts[role].lineHeight, style.fonts[role].letterSpacing]))) {
-      groups.push('typeScale');
-    }
-    if (differs((style) => [style.colors, style.palette, roles.map((role) => style.fonts[role].color ?? null)])) groups.push('colour');
-    return groups;
+    const typeOf = (style: ThemeStyle, role: ThemeTextRole): unknown => {
+      const font = style.fonts[role];
+      return [font.family, font.weight, font.size, font.lineHeight, font.letterSpacing];
+    };
+    const retyped = all.filter((role) => differs((style) => typeOf(style, role)));
+    const colour = differs((style) => [style.colors, style.palette, all.map((role) => style.fonts[role].color ?? null)]);
+    return {
+      // A colour belongs to every role at once (text, muted, the ground).
+      roles: colour ? all : retyped,
+      typography: retyped.length > 0,
+      colour,
+    };
   }
 
   function finishDraft(): void {
@@ -974,31 +962,51 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
     const deck = store.get().deck;
     const previous = deck.themeStyle ?? themeStyleOf(base);
     const changed = JSON.stringify(style) !== JSON.stringify(previous);
-    const edited = changed ? editedAdoptionGroups(previous, style) : [];
+    const edited = editedAdoption(previous, style);
     draft = null;
     if (themeEditor) themeEditor.hidden = true;
     deps.onPreviewThemeDraft?.(null);
     const currentCss = cssEditor.getValue();
     if (changed) {
+      const before = store.get().deck;
       store.commit((target) => {
-        // A default changes for new slides and the next Apply; slides already
-        // on the stylesheet are pinned where they are (installThemeStyle).
-        installThemeStyle(target, style, base.id, { slides: new Set(), elements: new Set() }, currentCss);
+        // The edit is the deck's look from now on, for every slide: nothing is
+        // pinned, so boxes already on the stylesheet move with it at once.
+        installThemeStyle(target, style, base.id, {
+          slides: new Set(target.slides.map((slide) => slide.id)), elements: new Set(),
+        }, currentCss);
+        // Boxes carrying their own copy of what was edited would not move, so
+        // those copies go, exactly as an Apply to the deck would take them.
+        if (edited.typography || edited.colour) {
+          adoptThemeStyles(target, presetFromStyle(style, base), {
+            scope: 'deck',
+            roles: edited.roles,
+            fontFamily: edited.typography,
+            fontWeight: edited.typography,
+            typeScale: edited.typography,
+            textColor: edited.colour,
+            background: edited.colour,
+            objectColors: false,
+            replaceOverrides: true,
+          }, target.slides.length > 0 ? 0 : -1, new Set(), new Set(), currentCss);
+        }
         selectedThemeId = base.id;
       }, { label: `Edit theme ${base.name}` });
       refreshThemeCss();
+      refreshSwatches();
       themeGallery?.setSelected(store.get().deck.themePreset);
       themeGallery?.setInstalled(store.get().deck.themePreset);
       void save();
-      // Existing slides stay put until Apply, so make sure Apply carries what
-      // was just edited: an edited size with Type scale left off used to
-      // change nothing on the slides at all.
-      for (const group of edited) tickAdoption(group);
-      // Spacing is not held back like type is: boxes without their own
-      // spacing follow the deck's at once.
-      setStatusMessage(edited.length > 0
-        ? `Edited “${base.name}”. New slides use it; click Apply to update existing slides.`
-        : `Edited “${base.name}”. Paragraph spacing now applies to every text box without its own.`);
+      const after = store.get().deck;
+      const restyled = after.slides.reduce((count, slide, index) => count + slide.elements
+        .filter((element, at) => JSON.stringify(element) !== JSON.stringify(before.slides[index]?.elements[at])).length, 0);
+      const name = base.name.replace(' · Modified', '');
+      setStatusMessage(!edited.typography && !edited.colour
+        // Spacing is the stylesheet's alone: no box carries a copy to clear.
+        ? `Edited “${name}”. Paragraph spacing now applies to every text box without its own.`
+        : restyled > 0
+          ? `Edited “${name}”: ${plural(restyled, 'box')} restyled to follow it.`
+          : `Edited “${name}”. Every slide follows it.`);
     }
     notifyThemePreview();
   }
@@ -1014,14 +1022,17 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
     themeEditor.replaceChildren();
     themeEditor.appendChild(groupLabel(`Editing ${base.name.replace(' · Modified', '')}`));
     themeEditor.appendChild(hintLine(
-      'Edits change deck defaults and new slides. Existing slides follow after Apply. The canvas previews the draft.',
+      'Edits apply to every slide when you press Done. The canvas previews the draft.',
     ));
 
-    const ROLE_LABELS: Record<'title' | 'body' | 'caption', string> = {
-      title: 'Title', body: 'Body', caption: 'Caption',
+    // Heading is listed with the rest: slide headings carry that role, and
+    // without a field of its own their size could not be set anywhere.
+    const EDITED_ROLES = ['title', 'heading', 'body', 'caption'] as const;
+    const ROLE_LABELS: Record<(typeof EDITED_ROLES)[number], string> = {
+      title: 'Title', heading: 'Heading', body: 'Body', caption: 'Caption',
     };
     themeEditor.appendChild(groupLabel('Typefaces'));
-    for (const role of ['title', 'body', 'caption'] as const) {
+    for (const role of EDITED_ROLES) {
       themeEditor.appendChild(fontFamilyField(
         `${ROLE_LABELS[role]} typeface`,
         style.fonts[role].family,
@@ -1031,7 +1042,7 @@ export function createThemePanel(deps: ThemePanelDeps): ThemePanel {
       ));
     }
     themeEditor.appendChild(groupLabel('Type scale'));
-    for (const role of ['title', 'body', 'caption'] as const) {
+    for (const role of EDITED_ROLES) {
       const sizeField = numberField(
         `${ROLE_LABELS[role]} size`,
         style.fonts[role].size,

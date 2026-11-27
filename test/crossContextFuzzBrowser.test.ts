@@ -156,9 +156,19 @@ type OpName =
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
   | 'cmd+a' | 'group toggle' | 'panel toggle' | 'view menu' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case' | 'image caption'
-  | 'copy as image' | 'template list' | 'plot dialog';
+  | 'copy as image' | 'template list' | 'plot dialog' | 'theme edit';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
+
+/**
+ * Text on the current slide that has a role the theme sizes and still carries
+ * a size of its own, leaving out placeholders (a layout may size its slots).
+ */
+const SIZED_ROLE_TEXT = `window.store.slide.elements
+  .filter((el) => el.type === 'text' && !el.layoutPlaceholder
+    && el.class.some((name) => /^role-(title|heading|body|caption)$/.test(name))
+    && (el.style['font-size'] || /font-size:\\s*\\d*\\.?\\d+(px|pt)/.test(el.html)))
+  .map((el) => el.id)`;
 
 /**
  * Plots the 'plot dialog' op inserted and removed again inside one step.
@@ -417,6 +427,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.editing === null) add('theme apply', 1);
   if (pre.editing === null) add('template list', 1);
   if (pre.editing === null) add('plot dialog', 1);
+  if (pre.editing === null) add('theme edit', 1);
   add('grid toggle', 1);
   add('panel toggle', 1);
   add('view menu', 1);
@@ -1027,24 +1038,48 @@ async function performOp(
       return 'same';
     }
     case 'theme apply': {
-      // The Design tab's Apply with Type scale and "Replace my manual
-      // changes" ticked, by real clicks: afterwards no text box on the slide
-      // may keep a size of its own -- each one follows the theme's role size.
+      // The Design tab's Apply with Typography ticked, by real clicks.
+      // Untagged text is given a role and hand-set type is replaced without
+      // being asked, so afterwards no text box with a role the theme sizes may
+      // keep a size of its own -- unless its layout sets one for its slot.
       await session.cdp.click('#side-tabs button[data-panel="themePanel"]', 'Design tab');
       await wait(120);
-      for (const group of ['typeScale', 'replaceAuthored']) {
-        const ticked = await session.cdp.evaluate<boolean>(
-          `document.querySelector('input[data-group="${group}"]').checked`);
-        if (!ticked) await session.cdp.click(`input[data-group="${group}"]`, group);
-      }
+      const ticked = await session.cdp.evaluate<boolean>(
+        `document.querySelector('input[data-group="typography"]').checked`);
+      if (!ticked) await session.cdp.click('input[data-group="typography"]', 'Typography');
       await session.cdp.click('.theme-apply-action button', 'Apply theme');
       await wait(150);
       await session.cdp.click('#side-tabs button[data-panel="inspector"]', 'Props tab');
       await wait(150);
-      const sized = await session.cdp.evaluate<string[]>(`window.store.slide.elements
-        .filter((el) => el.type === 'text' && (el.style['font-size'] || /font-size:\\s*\\d*\\.?\\d+(px|pt)/.test(el.html)))
-        .map((el) => el.id)`);
-      if (sized.length > 0) flag('routing', `Apply with Type scale left sizes on [${sized.join(', ')}]`);
+      const sized = await session.cdp.evaluate<string[]>(SIZED_ROLE_TEXT);
+      if (sized.length > 0) flag('routing', `Apply with Typography left sizes on [${sized.join(', ')}]`);
+      return 'same';
+    }
+    case 'theme edit': {
+      // Edit… → a new Title size → Done restyles every slide at once: no
+      // separate Apply, and no title left carrying a size of its own.
+      await session.cdp.click('#side-tabs button[data-panel="themePanel"]', 'Design tab');
+      await wait(120);
+      await session.cdp.click('.theme-edit-button', 'Edit theme');
+      await wait(120);
+      const size = 60 + Math.floor(next() * 40);
+      await session.cdp.evaluate(`(() => {
+        const field = [...document.querySelectorAll('.theme-inline-editor .theme-role-size')]
+          .find((node) => node.querySelector('span')?.textContent === 'Title size');
+        const input = field.querySelector('input');
+        input.value = '${size}';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`);
+      await session.cdp.evaluate(`([...document.querySelectorAll('.theme-inline-editor button')]
+        .find((button) => button.textContent === 'Done').click(), true)`);
+      await wait(200);
+      const installed = await session.cdp.evaluate<number>('window.store.get().deck.themeStyle?.fonts.title.size ?? 0');
+      if (installed !== size) flag('routing', `Done left the title size at ${installed}, not ${size}`);
+      const titles = await session.cdp.evaluate<string[]>(`${SIZED_ROLE_TEXT.replace('title|heading|body|caption', 'title')}`);
+      if (titles.length > 0) flag('routing', `Done left titles carrying their own size: [${titles.join(', ')}]`);
+      await session.cdp.click('#side-tabs button[data-panel="inspector"]', 'Props tab');
+      await wait(150);
       return 'same';
     }
     case 'undo':

@@ -49,15 +49,13 @@ describe('theme panel', () => {
     masters[1].click();
     expect(onEditLayouts).toHaveBeenCalledWith('standard');
 
-    // Roles are always on show; properties are three decisions plus detection,
-    // and whether to replace what the author set by hand.
+    // Roles are always on show, Heading among them; properties are two
+    // decisions. Detecting roles and replacing hand-set type are not offered:
+    // an Apply without them changed nothing, so they always happen.
     const labels = [...panel.element.querySelectorAll<HTMLElement>('.theme-adoption-controls .field-check > span')]
       .map((label) => label.firstChild?.textContent);
-    expect(labels).toEqual([
-      'Title', 'Body', 'Caption',
-      'Typography', 'Type scale', 'Colour', 'Detect roles for untagged text', 'Replace my manual changes',
-    ]);
-    expect(labels).not.toContain('Heading');
+    expect(labels).toEqual(['Title', 'Heading', 'Body', 'Caption', 'Typography', 'Colour']);
+    expect(panel.element.querySelector<HTMLSelectElement>('.theme-adoption-controls select')!.value).toBe('deck');
   });
 
   it('dismisses theme picking and the inline theme editor', () => {
@@ -407,7 +405,7 @@ describe('theme panel', () => {
 });
 
 describe('the theme editor’s type scale', () => {
-  it('edits one role’s default size into theme.css on Done, without moving existing slides', () => {
+  it('edits one role’s default size into theme.css on Done, and every slide follows', () => {
     const deck = emptyDeck('Scale panel');
     deck.themePreset = THEMES[0].id;
     deck.themeStyle = structuredClone({
@@ -434,7 +432,7 @@ describe('the theme editor’s type scale', () => {
 
     const sizes = [...panel.element.querySelectorAll<HTMLElement>('.theme-role-size')];
     expect(sizes.map((node) => node.querySelector('span')?.textContent)).toEqual([
-      'Title size', 'Body size', 'Caption size', 'Paragraph spacing',
+      'Title size', 'Heading size', 'Body size', 'Caption size', 'Paragraph spacing',
     ]);
     const title = sizes[0].querySelector('input')!;
     const before = THEMES[0].fonts.title.size;
@@ -452,10 +450,10 @@ describe('the theme editor’s type scale', () => {
     expect(onPreviewThemeDraft).toHaveBeenLastCalledWith(null);
     expect(store.get().deck.themeStyle?.fonts.title.size).toBe(100);
     expect(saveThemeCss).toHaveBeenLastCalledWith(expect.stringMatching(/\.role-title \{[^}]*font-size: 100px/));
-    // The existing title kept the size it rendered at; only new slides and an
-    // explicit Apply see 100px.
+    // The existing title carries no size of its own, so it follows the
+    // stylesheet to 100px along with every new slide.
     expect(store.get().deck.slides[0].elements.find((el) => el.id === 'following')?.style)
-      .toEqual({ 'font-size': `${before}px` });
+      .toEqual({});
     expect(panel.element.querySelector<HTMLElement>('.theme-inline-editor')!.hidden).toBe(true);
   });
 
@@ -594,33 +592,35 @@ describe('editing a theme size and applying it', () => {
     return { store, button, group, box, editBodySize, status, css: () => css };
   }
 
-  // BUG: Done pinned every box at its old size and Apply, with Type scale off
-  // by default, left the pin in place: an edited size never reached a slide.
-  it('carries an edited size to the selected slide on the next Apply', () => {
-    const { button, group, box, editBodySize, status, css } = openWithBody();
-    expect(group('typeScale').checked).toBe(false);
+  // Done used to pin every box at its old size and leave the edit for an
+  // Apply the author had to know to press, with the right boxes ticked: an
+  // edited size never reached a slide. Done is the apply now.
+  it('carries an edited size to every slide on Done, as one undo step', () => {
+    const { store, box, editBodySize, status, css } = openWithBody();
     editBodySize(64);
-    // Nothing on screen moves until Apply...
-    expect(box().style['font-size']).toBe('48px');
-    // ...and Apply is now set up to carry the edit.
-    expect(group('typeScale').checked).toBe(true);
-    expect(status.at(-1)).toMatch(/click Apply to update existing slides/);
-
-    button(/^Apply theme/).click();
     expect(box().style['font-size']).toBeUndefined();
     expect(css()).toMatch(/\.role-body[^}]*font-size:\s*64px/);
+    expect(status.at(-1)).toMatch(/^Edited /);
+    expect(status.at(-1)).not.toMatch(/click Apply/);
+
+    store.undo();
+    expect(store.get().deck.themeStyle?.fonts.body.size).not.toBe(64);
   });
 
-  it('keeps a size set by hand unless asked to replace manual changes', () => {
-    const { button, group, box, editBodySize } = openWithBody({ style: { 'font-size': '30px' }, overrides: ['font-size'] });
+  it('replaces a size set by hand, and leaves the roles that were not edited alone', () => {
+    const { store, box, editBodySize, status } = openWithBody({ style: { 'font-size': '30px' }, overrides: ['font-size'] });
+    store.commit((deck) => {
+      deck.slides[0].elements.push({
+        id: 'title', type: 'text', x: 0, y: 300, w: 800, h: 200, rot: 0, z: 2, opacity: 1,
+        class: ['role-title'], style: { 'font-size': '90px' }, html: 'Title', align: 'left', valign: 'top',
+      } as never);
+    });
     editBodySize(64);
-    button(/^Apply theme/).click();
-    expect(box().style['font-size']).toBe('30px');
-
-    group('replaceAuthored').click();
-    button(/^Apply theme/).click();
     expect(box().style['font-size']).toBeUndefined();
     expect(box().overrides).toBeUndefined();
+    expect(status.at(-1)).toMatch(/1 box restyled/);
+    // Only the body's size was edited, so a title sized by hand keeps its size.
+    expect((store.get().deck.slides[0].elements[1] as { style: Record<string, string> }).style['font-size']).toBe('90px');
   });
 });
 
@@ -651,8 +651,6 @@ describe('paragraph spacing in the Design tab', () => {
     expect(css).toContain('.element-text:not([data-paragraph-spacing]) { --paragraph-spacing: 24px; }');
     expect(css).toMatch(/\.element-text:not\(\[data-paragraph-spacing\]\) \.text-content > \* \+ \*/);
     expect(status.at(-1)).toMatch(/Paragraph spacing now applies/);
-    // Type was not edited, so Apply is left as it was.
-    expect(panel.element.querySelector<HTMLInputElement>('input[data-group="typeScale"]')!.checked).toBe(false);
 
     store.undo();
     expect(store.get().deck.themeStyle?.paragraphSpacing).toBeUndefined();

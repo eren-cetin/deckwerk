@@ -25,9 +25,12 @@ Narrow an adoption when the request is specific:
     slide-agent theme apply . --id <id> --scope slides --slide 4,7 \
       --properties fonts,weights,scale
 
-Other properties are `text-color`, `background`, and `object-colors`.
-`--keep-overrides` preserves inline styling. `--detect-roles` is for legacy text
-without role classes. Use `theme create --replace` while iterating on a custom
+Other properties are `text-color`, `background`, and `object-colors`. An apply
+reaches every text box by default: untagged text is given a role by its size,
+and a font, size, weight or colour set on a box by hand is replaced, keeping
+emphasis on words inside it and whatever the slide's layout sets for a slot.
+`--no-detect-roles` leaves untagged text alone and `--keep-overrides` preserves
+inline styling. Use `theme create --replace` while iterating on a custom
 preset. `-dark` and `-light` select generated variants.
 
 Never edit between the generated theme markers in `theme.css`; theme commands

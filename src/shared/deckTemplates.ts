@@ -167,7 +167,6 @@ export function applyTemplateToDeck(deck: Deck, template: DeckTemplate, currentC
       background: true,
       objectColors: true,
       replaceOverrides: true,
-      detectRoles: false,
     } as ThemeAdoption, 0, new Set(), new Set(), currentCss);
   }
   // Exactly the template's defaults, whatever the adoption composed on the way.

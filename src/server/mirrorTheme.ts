@@ -120,7 +120,6 @@ export function mirrorThemeAction(deck: Deck, currentCss: string, request: Mirro
     background: true,
     objectColors: true,
     replaceOverrides: true,
-    detectRoles: false,
   } as ThemeAdoption, 0, new Set(), new Set(targets), currentCss);
   const css = next.themeStyle && JSON.stringify(next.themeStyle) !== JSON.stringify(deck.themeStyle)
     ? withThemeBlock(currentCss, themeStyleCss(next.themeStyle, theme.name))

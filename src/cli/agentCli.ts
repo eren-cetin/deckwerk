@@ -182,10 +182,12 @@ Everything else:
             [--slide id|number|--all]
             [--roles title,heading,body,caption,base]
             [--properties fonts,weights,scale,text-color,background,object-colors]
-            [--keep-overrides] [--detect-roles]
-                                          restyle slides that already exist;
-                                          every scope installs what it adopts
-                                          into theme.css and pins the rest
+            [--keep-overrides] [--no-detect-roles]
+                                          restyle slides that already exist:
+                                          untagged text is given a role and
+                                          hand-set type is replaced unless
+                                          told otherwise; every scope installs
+                                          what it adopts and pins the rest
   template  list                          designs saved as templates, newest first
   template  save [deck] --name <name> [--replace]
                                           keep the deck's theme, layouts, page
@@ -2091,7 +2093,7 @@ const THEME_PROPERTIES: Record<string, keyof ThemeAdoption> = {
 
 async function themeApplyCommand(argv: string[], io: CliIo): Promise<number> {
   const { flags, options, positional } = parseFlags(argv, ['id', 'scope', 'roles', 'properties']);
-  ensureKnownFlags('theme apply', flags, ['slide', 'selected', 'all', 'keep-overrides', 'detect-roles']);
+  ensureKnownFlags('theme apply', flags, ['slide', 'selected', 'all', 'keep-overrides', 'detect-roles', 'no-detect-roles']);
   ensurePositionals('theme apply', positional, 1);
   const deckDir = resolveDeckDir(positional[0], io);
   const id = options.get('id');
@@ -2143,7 +2145,10 @@ async function themeApplyCommand(argv: string[], io: CliIo): Promise<number> {
     // is visible at all: inline properties an earlier theme wrote must give
     // way, or the stylesheet this apply installs is overridden on every box.
     replaceOverrides: !flags.has('keep-overrides'),
-    detectRoles: flags.has('detect-roles'),
+    // On by default, as in the panel: untagged text follows no role, so an
+    // apply that skipped it changed nothing. `--detect-roles` is still
+    // accepted from before it became the default.
+    detectRoles: !flags.has('no-detect-roles'),
   } as ThemeAdoption, 0, new Set(), new Set(targets.map((slide) => slide.id)), stylesheetBefore);
 
   const operations = diffDecks(deck, next);
@@ -2151,7 +2156,7 @@ async function themeApplyCommand(argv: string[], io: CliIo): Promise<number> {
     io.out(json({ status: 'applied', applied: false, changed: 0, message: 'Nothing to change.' }));
     return EXIT_OK;
   }
-  const warnings = themeApplyWarnings(deck, next, flags.has('detect-roles'));
+  const warnings = themeApplyWarnings(deck, next, !flags.has('no-detect-roles'));
 
   // Every apply is also an install: the slides it restyles follow the deck's
   // composed defaults, which belong in the stylesheet the slides actually

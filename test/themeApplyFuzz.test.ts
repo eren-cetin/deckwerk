@@ -133,6 +133,7 @@ function randomAdoption(rand: Rand): ThemeAdoption {
 }
 
 const json = (value: unknown) => JSON.stringify(value);
+const EMPHASIS = new Set(['font-weight', 'font-style', 'text-decoration', 'color']);
 
 type TextElement = Extract<SlideElement, { type: 'text' }>;
 const ADOPTABLE = ['font-family', 'font-weight', 'font-size', 'line-height', 'letter-spacing', 'color'] as const;
@@ -242,13 +243,16 @@ describe('adoptThemeStyles fuzz', () => {
         || options.textColor || options.background || options.objectColors;
       const adopted = adoptedProperties(options);
 
-      // Scope: the slides whose boxes were asked to move.
+      // Scope: the slides whose boxes were asked to move. "Selected slides"
+      // with none of them in the deck means the slide being looked at.
+      const currentIds = [deck.slides[slideIndex]?.id].filter(Boolean) as string[];
+      const chosenIds = deck.slides.map((slide) => slide.id).filter((id) => selectedSlideIds.has(id));
       const scoped = new Set(
         options.scope === 'deck'
           ? deck.slides.map((slide) => slide.id)
           : options.scope === 'slides'
-            ? [...selectedSlideIds]
-            : [deck.slides[slideIndex]?.id].filter(Boolean) as string[],
+            ? (chosenIds.length > 0 ? chosenIds : currentIds)
+            : currentIds,
       );
       const isTarget = (slide: Slide, el: SlideElement): boolean =>
         scoped.has(slide.id) && (options.scope !== 'selection' || elementSelection.has(el.id));
@@ -306,7 +310,9 @@ describe('adoptThemeStyles fuzz', () => {
       }
 
       // Targets follow theme.css: no copy of an adopted property at any level,
-      // except a relative run size, which scales with the box and stays.
+      // except a relative run size, which scales with the box and stays, and
+      // emphasis on part of the text (every run here is partial), which is
+      // the author marking words out rather than styling the box.
       for (const slide of deck.slides) {
         for (const el of slide.elements) {
           if (el.type !== 'text' || !isTarget(slide, el)) continue;
@@ -318,7 +324,7 @@ describe('adoptThemeStyles fuzz', () => {
               .flatMap((m) => (m[1] ?? m[2]).split(';').map((d) => d.trim()).filter(Boolean));
             for (const run of runs) {
               const [name, value] = run.split(':').map((part) => part.trim());
-              if (name !== property) continue;
+              if (name !== property || EMPHASIS.has(property)) continue;
               expect(property === 'font-size' && /(em|%)$/.test(value), `${label}: target ${el.id} run ${run}`).toBe(true);
             }
           }

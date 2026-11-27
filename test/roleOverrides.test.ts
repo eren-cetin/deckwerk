@@ -90,13 +90,13 @@ describe('applying a theme to a box with overrides', () => {
     return deck;
   }
 
-  it('moves everything the author did not touch and leaves the bold alone', () => {
+  it('moves everything the author did not touch and leaves the bold alone when asked to keep hand-set type', () => {
     const bold = body('bold', { 'font-family': 'Georgia, serif', 'font-size': '30px', color: '#123456' });
     setWholeTextFormat(bold, 'bold', true);
     const plain = body('plain', { 'font-family': 'Georgia, serif', 'font-weight': '300' });
     const deck = deckWith(bold, plain);
 
-    adoptThemeStyles(deck, NOIR, ALL_TYPE, 0, new Set(), new Set());
+    adoptThemeStyles(deck, NOIR, { ...ALL_TYPE, replaceAuthored: false }, 0, new Set(), new Set());
 
     const [afterBold, afterPlain] = deck.slides[0].elements as TextEl[];
     // The pinned face, size and colour are gone: the theme decides them now.
@@ -108,6 +108,30 @@ describe('applying a theme to a box with overrides', () => {
     expect(textOverrides(afterBold)).toEqual(['font-weight']);
     // A box with no overrides follows the theme entirely, as before.
     expect(afterPlain.style).toEqual({});
+  });
+
+  // An apply that stepped around every hand-set size read as one that had
+  // not worked, so by default the box follows the theme whole.
+  it('replaces hand-set type by default, and keeps emphasis inside the text', () => {
+    const bold = body('bold', { 'font-family': 'Georgia, serif', 'font-size': '30px' });
+    setWholeTextFormat(bold, 'bold', true);
+    const emphasised = body('emphasised', { 'font-weight': '300', color: '#123456' });
+    emphasised.html = '<ul><li><span style="font-weight: 700; font-size: 20px">Key term</span>: the rest'
+      + ' <span style="color: #ff0000">in red</span></li></ul>';
+    const deck = deckWith(bold, emphasised);
+
+    adoptThemeStyles(deck, NOIR, { ...ALL_TYPE, textColor: true }, 0, new Set(), new Set());
+
+    const [afterBold, afterEmphasised] = deck.slides[0].elements as TextEl[];
+    // The whole-box bold was the box's own type: it goes, with its "+".
+    expect(afterBold.style).toEqual({});
+    expect(afterBold.html).not.toContain('font-weight');
+    expect(textOverrides(afterBold)).toEqual([]);
+    // Words marked out inside a box are the author's emphasis and stay; a run's
+    // absolute size is never emphasis and goes.
+    expect(afterEmphasised.style).toEqual({});
+    expect(afterEmphasised.html).toBe('<ul><li><span style="font-weight: 700">Key term</span>: the rest'
+      + ' <span style="color: #ff0000">in red</span></li></ul>');
   });
 
   it('keeps every own property when overrides are not to be replaced', () => {

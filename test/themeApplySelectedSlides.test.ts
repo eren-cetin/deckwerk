@@ -220,7 +220,7 @@ describe('adoptThemeStyles at slides scope', () => {
    * skipped entirely, and since `base` is not adopted either, theme.css still
    * gives it the same family: the apply changes nothing visible on such a slide.
    */
-  it('skips untagged text unless role detection is on (panel default)', () => {
+  it('skips untagged text only when role detection is turned off', () => {
     const deck = threeSlideDeck();
     const theme = THEMES.find((candidate) => candidate.id === 'hacker')!;
     const panelDefaults: ThemeAdoption = {
@@ -235,7 +235,9 @@ describe('adoptThemeStyles at slides scope', () => {
 
     // With detection on it is classed into a role the theme now styles, and
     // follows theme.css for that role's family and weight.
-    adoptThemeStyles(deck, theme, { ...panelDefaults, detectRoles: true }, 0, new Set(), new Set(['s2']));
+    const { detectRoles: _off, ...detecting } = panelDefaults;
+    void _off;
+    adoptThemeStyles(deck, theme, { ...detecting }, 0, new Set(), new Set(['s2']));
     const detected = deck.slides[1].elements.find((el) => el.id === 's2-plain')!;
     const role = detected.class.find((name) => name.startsWith('role-'))?.slice(5) as 'title' | 'heading' | 'body' | 'caption' | 'base' | undefined;
     expect(role).toBeDefined();
@@ -311,6 +313,12 @@ describe('the theme panel apply button', () => {
     return Object.assign(panel, { saveThemeCss });
   }
 
+  function chooseScope(panel: HTMLElement, scope: string): void {
+    const select = panel.querySelector<HTMLSelectElement>('.theme-adoption-controls select')!;
+    select.value = scope;
+    select.dispatchEvent(new Event('change'));
+  }
+
   function setOption(panel: HTMLElement, label: string, checked: boolean): void {
     const box = [...panel.querySelectorAll<HTMLLabelElement>('label.field-check')]
       .find((candidate) => candidate.querySelector('span')?.textContent?.trim().startsWith(label))!;
@@ -326,7 +334,6 @@ describe('the theme panel apply button', () => {
     panel.syncScope(store.get().slideSelection.size);
     expect(panel.applyButtonLabel()).toBe('Apply theme to 3 selected slides');
 
-    setOption(panel.element, 'Type scale', true);
     setOption(panel.element, 'Colour', true);
     panel.element.querySelector<HTMLButtonElement>('.theme-apply-action button')!.click();
 
@@ -353,6 +360,9 @@ describe('the theme panel apply button', () => {
     const panel = buildPanel(store);
     store.selectSlide(1);
     panel.syncScope(store.get().slideSelection.size);
+    // The panel opens on the whole deck; one slide is a choice to make.
+    expect(panel.applyButtonLabel()).toBe('Apply theme to deck');
+    chooseScope(panel.element, 'slides');
     expect(panel.applyButtonLabel()).toBe('Apply theme to 1 selected slide');
 
     setOption(panel.element, 'Colour', true);
@@ -381,6 +391,7 @@ describe('the theme panel apply button', () => {
     panel.syncScope(3);
     store.selectSlide(1); // collapse back to one slide
     panel.syncScope(1);
+    expect(panel.applyButtonLabel()).toBe('Apply theme to 1 selected slide');
 
     setOption(panel.element, 'Colour', true);
     panel.element.querySelector<HTMLButtonElement>('.theme-apply-action button')!.click();
@@ -395,13 +406,18 @@ describe('the theme panel apply button', () => {
 describe('adoptThemeStyles at slides scope: selection edge cases', () => {
   const noir = () => THEMES.find((candidate) => candidate.id === 'noir')!;
 
-  it('moves nothing on screen when nothing is selected: every slide is pinned where it was', () => {
+  // "Selected slides" with none selected used to restyle no slide at all
+  // while pinning every one: an Apply with no effect. It means the slide
+  // being looked at, which is what the panel's button already said.
+  it('restyles the current slide when nothing is selected, and pins the others where they were', () => {
     const deck = threeSlideDeck();
     const before = structuredClone(deck.slides);
     adoptThemeStyles(deck, noir(), { ...FULL_APPLY }, 0, new Set(), new Set());
-    // The theme is installed, so every slide has to be pinned to keep its look.
     expect(deck.themePreset).toBe('noir');
+    expect(deck.slides[0].background).toEqual({ color: null, image: null });
     for (const [at, slide] of deck.slides.entries()) {
+      if (at === 0) continue;
+
       expect(withoutStyling(slide)).toBe(withoutStyling(before[at]));
       expect(slide.background).toEqual({ color: STOCK.colors.background, image: null });
     }

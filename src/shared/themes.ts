@@ -1,4 +1,5 @@
 import type { Deck, Slide, SlideElement, ThemeSelection, ThemeStyle } from './deck.js';
+import { layoutTypeOf } from './layoutMasters.js';
 import { type FontSet, deckProseMax, fontSetCss, roleForElement } from './fontSets.js';
 
 /**
@@ -542,10 +543,17 @@ export interface ThemeAdoption {
   background: boolean;
   objectColors: boolean;
   replaceOverrides: boolean;
-  detectRoles: boolean;
+  /**
+   * Tag untagged text with a role by its size before adopting. On unless
+   * turned off: untagged text follows no role, so an apply that skipped it
+   * changed nothing on decks whose text was never tagged.
+   */
+  detectRoles?: boolean;
   /**
    * Replace what the author set on purpose too (the "+" overrides), not only
-   * the copies the app pinned. Off unless asked for: a bold body stays bold.
+   * the copies the app pinned. On unless turned off: an apply that stepped
+   * around every hand-set size read as an apply that did not work. Emphasis
+   * inside a box survives either way (see `stripBoxStyleProperties`).
    */
   replaceAuthored?: boolean;
 }
@@ -577,11 +585,18 @@ export function adoptThemeStyles(
   // included), so a colour picked from one of their rows travels by slot and
   // a colour that merely coincides with some other preset's swatch does not.
   const slots = paletteSlots(wornThemes(deck, theme));
+  const current = [deck.slides[slideIndex]].filter((slide): slide is Slide => Boolean(slide));
+  const chosen = deck.slides.filter((slide) => selectedSlideIds.has(slide.id));
+  // "Selected slides" with nothing selected means the slide being looked at,
+  // which is what the panel's button and dry run already say. Restyling no
+  // slide at all, while pinning every one, was an apply with no effect.
   const slides = options.scope === 'deck'
     ? deck.slides
     : options.scope === 'slides'
-      ? deck.slides.filter((slide) => selectedSlideIds.has(slide.id))
-    : [deck.slides[slideIndex]].filter((slide): slide is Slide => Boolean(slide));
+      ? (chosen.length > 0 ? chosen : current)
+      : current;
+  const detectRoles = options.detectRoles !== false;
+  const replaceAuthored = options.replaceAuthored !== false;
   const maxProse = deckProseMax(deck.slides.flatMap((slide) => slide.elements
     .filter((el) => el.type === 'text')
     .map((el) => ({ html: el.html, size: Number.parseFloat(el.style['font-size'] ?? '0') || 0 }))));
@@ -652,7 +667,7 @@ export function adoptThemeStyles(
       if (el.type === 'text') {
         const tagged = explicitRole(el);
         let role = tagged ?? 'base';
-        if (options.detectRoles && tagged === null) {
+        if (detectRoles && tagged === null) {
           const size = Number.parseFloat(el.style['font-size'] ?? '0') || 0;
           role = roleForElement(el.class, size, maxProse);
           el.class = [...el.class.filter((name) => !name.startsWith('role-')), `role-${role}`];
@@ -669,12 +684,19 @@ export function adoptThemeStyles(
         if (options.fontWeight) properties.push('font-weight');
         if (options.typeScale) properties.push('font-size', 'line-height', 'letter-spacing');
         if (options.textColor) properties.push('color');
-        // What the author set on purpose is theirs: a bold body stays bold
-        // while its face, size and colour move to the new theme.
-        const kept = new Set(options.replaceAuthored ? [] : el.overrides ?? []);
+        // Asked to leave hand-set type alone, a bold body stays bold while
+        // its face, size and colour move to the new theme. Otherwise the box
+        // follows the theme whole; words emphasised inside it keep their
+        // emphasis either way.
+        // What the slide's layout sets for this slot is the layout's to
+        // decide and outranks the theme, so it is not a copy to clear.
+        const kept = new Set([
+          ...(replaceAuthored ? [] : el.overrides ?? []),
+          ...Object.keys(layoutTypeOf(deck, slide, el)),
+        ]);
         const replaced = properties.filter((property) => !kept.has(property));
-        if (replaced.length > 0) clearTextProperties(el, replaced);
-        if (options.replaceAuthored && el.overrides) {
+        if (replaced.length > 0) clearTextProperties(el, replaced, { keepEmphasis: true });
+        if (replaceAuthored && el.overrides) {
           // Replaced on request, so no longer the author's own: the "+" goes.
           const remaining = el.overrides.filter((property) => !replaced.includes(property));
           if (remaining.length > 0) el.overrides = remaining;
@@ -729,7 +751,11 @@ export function followThemeOnText(el: Extract<SlideElement, { type: 'text' }>): 
  * Remove a box's own declarations for `properties` at every level, so the
  * stylesheet decides them. Absolute run sizes go; relative ones stay.
  */
-export function clearTextProperties(el: Extract<SlideElement, { type: 'text' }>, properties: string[]): void {
+export function clearTextProperties(
+  el: Extract<SlideElement, { type: 'text' }>,
+  properties: string[],
+  options: { keepEmphasis?: boolean } = {},
+): void {
   const style = { ...el.style };
   for (const property of properties) delete style[property];
   el.style = style;
@@ -738,7 +764,9 @@ export function clearTextProperties(el: Extract<SlideElement, { type: 'text' }>,
     for (const property of properties) delete contentStyle[property];
     el.contentStyle = Object.keys(contentStyle).length > 0 ? contentStyle : undefined;
   }
-  el.html = stripStyleProperties(el.html, properties);
+  el.html = options.keepEmphasis
+    ? stripBoxStyleProperties(el.html, properties)
+    : stripStyleProperties(el.html, properties);
 }
 
 /**
@@ -757,6 +785,74 @@ export function clearTextProperties(el: Extract<SlideElement, { type: 'text' }>,
 export function stripStyleProperties(html: string, properties: string[]): string {
   if (properties.length === 0 || !/style\s*=/.test(html)) return html;
   const wanted = new Set(properties.map((property) => property.toLowerCase()));
+  return stripDeclarations(html, wanted);
+}
+
+/** What marks some words out from the rest of their box, rather than styling the box. */
+const EMPHASIS_PROPERTIES = new Set([
+  'font-weight', 'font-style', 'text-decoration', 'text-decoration-line', 'color',
+]);
+const VOID_TAGS = /^(?:area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/i;
+
+/**
+ * Strip CSS declarations the way a box following its theme needs: the box's
+ * own type goes, the emphasis inside it stays.
+ *
+ * A weight, slant, underline or colour on a run that wraps the whole text is
+ * the box's styling written as markup (the editor writes whole-box weight
+ * that way), so it goes like any other. On a run covering only part of the
+ * text it is emphasis the author put on those words, and removing it would
+ * flatten every bold term in a bullet list. Faces, sizes and spacing are
+ * never emphasis and go from every run.
+ *
+ * Args:
+ *     html: A text element's authored markup.
+ *     properties: The CSS properties the theme is taking over.
+ *
+ * Returns:
+ *     The markup with those declarations removed where they style the box.
+ */
+export function stripBoxStyleProperties(html: string, properties: string[]): string {
+  if (properties.length === 0 || !/style\s*=/.test(html)) return html;
+
+  const wanted = new Set(properties.map((property) => property.toLowerCase()));
+  const everywhere = new Set([...wanted].filter((property) => !EMPHASIS_PROPERTIES.has(property)));
+  const tokens = html.match(/<!--[\s\S]*?-->|<[^>]*>|[^<]+/g) ?? [];
+  // How much of the text each opening tag wraps, counted in visible characters.
+  const wrapped = new Map<number, number>();
+  const open: Array<{ index: number; name: string; before: number }> = [];
+  let seen = 0;
+  tokens.forEach((token, index) => {
+    if (!token.startsWith('<')) {
+      seen += token.replace(/\s+/g, '').length;
+      return;
+    }
+
+    const tag = /^<(\/?)([a-z][\w-]*)/i.exec(token);
+    if (!tag) return;
+
+    if (tag[1]) {
+      const at = open.map((entry) => entry.name).lastIndexOf(tag[2].toLowerCase());
+      for (const entry of at === -1 ? [] : open.splice(at)) wrapped.set(entry.index, seen - entry.before);
+    } else if (VOID_TAGS.test(tag[2]) || token.endsWith('/>')) {
+      wrapped.set(index, 0);
+    } else {
+      open.push({ index, name: tag[2].toLowerCase(), before: seen });
+    }
+  });
+  for (const entry of open) wrapped.set(entry.index, seen - entry.before);
+
+  return tokens.map((token, index) => {
+    if (!token.startsWith('<') || !/\sstyle\s*=/i.test(token)) return token;
+
+    const whole = seen > 0 && wrapped.get(index) === seen;
+    return stripDeclarations(token, whole ? wanted : everywhere);
+  }).join('');
+}
+
+function stripDeclarations(html: string, wanted: ReadonlySet<string>): string {
+  if (wanted.size === 0) return html;
+
   return html.replace(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/gi, (_match, _quoted, doubleQuoted, singleQuoted) => {
     const quote = doubleQuoted !== undefined ? '"' : "'";
     const declarations = splitDeclarations(decodeAttribute(String(doubleQuoted ?? singleQuoted ?? '')))

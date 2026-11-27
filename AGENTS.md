@@ -528,9 +528,15 @@ slide-agent render $DECK --all --output /tmp/shots   # look at it
 - Narrow what is taken with `--roles title,heading,body,caption,base` and
   `--properties fonts,weights,scale,text-color,background,object-colors`. Both
   default to everything.
-- `--detect-roles` tags untagged text by size. It reads the *inline* font size,
-  so text sized by the stylesheet has nothing to classify by — the command says
-  so rather than tagging everything `role-base` in silence.
+- An apply reaches every text box by default: untagged text is tagged with a
+  role by its size first, and a font, size, weight or colour set on a box by
+  hand is replaced by the theme's. Emphasis on words inside a box (a bold or
+  coloured term) is kept, and so is whatever the slide's layout sets for a
+  slot. `--no-detect-roles` leaves untagged text alone; `--keep-overrides`
+  leaves every inline declaration in place.
+- Role detection reads the *inline* font size, so text sized by the stylesheet
+  has nothing to classify by — the command says so rather than tagging
+  everything `role-base` in silence.
 - Append `-dark` or `-light` to any theme id for its counterpart: every colour
   keeps its hue and flips its lightness, so the theme keeps its voice.
 - Ids are lowercase, digits and dashes, may not shadow a built-in, and may not
@@ -736,10 +742,11 @@ slide-agent inspect $DECK --slide results      # confirm the result
   `role-body` / `role-caption` classes; inline `style` on an element overrides
   the stylesheet and is best reserved for deliberate one-offs. A role's default
   size lives in `themeStyle` in `deck.json` and is written into the generated
-  block of `theme.css` (in the app under Theme › Edit theme; from the CLI
-  through `theme create` and `theme apply`). Editing a default changes what new
-  slides are born with; existing slides keep their size until the theme is
-  applied to them. Layout masters never carry a size.
+  block of `theme.css` (in the app under Design › Edit…; from the CLI through
+  `theme create` and `theme apply`). Editing a theme in the app restyles every
+  slide when Done is pressed. A layout master may set its own font, weight or
+  size on a placeholder, and that outranks the theme on every slide of the
+  layout; a declaration a layout stops making is taken back off its slides.
 - A deck may carry its own theme presets in `deck.json` (`customThemes`), which
   resolve everywhere a built-in preset id does. Write them with
   `slide-agent theme create`, never by hand.
