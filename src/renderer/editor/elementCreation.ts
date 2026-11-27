@@ -2,6 +2,8 @@ import type { ShapeEl, TextEl } from '@shared/deck.js';
 import { makeId } from '@shared/geometry.js';
 import { applyTableColumnWidths } from '@shared/paragraphs.js';
 import { newObjectColors } from '@shared/themes.js';
+import { insertPlotFromDialog } from './plotEditing.js';
+import { barIconButton } from './shellWiring.js';
 import type { EditorStore } from './store.js';
 
 function nextZ(store: EditorStore): number {
@@ -314,4 +316,20 @@ export function createTableInsertPicker(store: EditorStore): HTMLElement {
   trigger.addEventListener('click', () => (menu ? close() : open()));
   wrap.appendChild(trigger);
   return wrap;
+}
+
+const PLOT_ICON =
+  '<svg class="bar-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+  '<path d="M2 2v12h12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<path d="M4.5 11 7.5 7l2.5 2 3.5-5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/** Plot button: opens the plot dialog and inserts what it returns. */
+export function createPlotInsertButton(store: EditorStore): HTMLButtonElement {
+  const trigger = barIconButton('Plot', PLOT_ICON, () => {
+    // Blurred like the shape picker's trigger: a focused bar button would
+    // swallow Backspace/Delete once the new plot is selected.
+    trigger.blur();
+    void insertPlotFromDialog(store);
+  });
+  return trigger;
 }

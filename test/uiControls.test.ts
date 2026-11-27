@@ -68,6 +68,8 @@ describe('shared editor controls', () => {
       expect(source).toContain("label: 'Keynote…'");
       expect(source).toContain("barIconButton('Text'");
       expect(source).toContain('createShapeInsertPicker(store)');
+      expect(source).toContain('createTableInsertPicker(store)');
+      expect(source).toContain('createPlotInsertButton(store)');
       expect(source).not.toContain("menuButton('File'");
       expect(source).not.toContain("menuButton('Insert'");
     }

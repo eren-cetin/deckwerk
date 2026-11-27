@@ -308,11 +308,21 @@ function removeLeadingText(root: Element, count: number): void {
   });
 }
 
-/** Build an editable table from the plain TSV flavour spreadsheet apps place
- *  beside their richer HTML clipboard data. Quoted cells may contain tabs or
- *  line breaks, and doubled quotes decode to one literal quote. */
-function pastedTsvTable(text: string): HTMLTableElement | null {
-  if (!text.includes('\t')) return null;
+/**
+ * Split spreadsheet clipboard text into rows of cells.
+ *
+ * Quoted cells may contain the delimiter or line breaks, and doubled quotes
+ * decode to one literal quote. The rows are returned as typed, ragged or not:
+ * deciding whether they make a table is the caller's business.
+ *
+ * Args:
+ *     text: The clipboard or file text.
+ *     delimiter: The single character that separates cells.
+ *
+ * Returns:
+ *     One array of cell strings per line.
+ */
+export function parseDelimitedRows(text: string, delimiter: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';
@@ -336,7 +346,7 @@ function pastedTsvTable(text: string): HTMLTableElement | null {
       } else {
         quoted = !quoted;
       }
-    } else if (char === '\t' && !quoted) {
+    } else if (char === delimiter && !quoted) {
       finishCell();
     } else if (char === '\n' && !quoted) {
       finishRow();
@@ -345,6 +355,16 @@ function pastedTsvTable(text: string): HTMLTableElement | null {
     }
   }
   if (cell || row.length > 0 || !source.endsWith('\n')) finishRow();
+
+  return rows;
+}
+
+/** Build an editable table from the plain TSV flavour spreadsheet apps place
+ *  beside their richer HTML clipboard data. Quoted cells may contain tabs or
+ *  line breaks, and doubled quotes decode to one literal quote. */
+function pastedTsvTable(text: string): HTMLTableElement | null {
+  if (!text.includes('\t')) return null;
+  const rows = parseDelimitedRows(text, '\t');
   // A spreadsheet range is a rectangle. One indented line ("\tsub-item" in a
   // pasted outline) is not a table, and neither is a ragged block of prose
   // that happens to contain a tab — turning either into a table is far more

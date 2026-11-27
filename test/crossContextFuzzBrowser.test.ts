@@ -156,9 +156,17 @@ type OpName =
   | 'type nonce' | 'bold mid-word' | 'escape' | 'click empty' | 'marquee'
   | 'rail hop' | 'rail drag' | 'find next' | 'shift drag' | 'page numbers' | 'theme apply' | 'grid toggle' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
   | 'cmd+a' | 'group toggle' | 'panel toggle' | 'view menu' | 'section fold' | 'path menu' | 'arrow slide' | 'list indent' | 'text case' | 'image caption'
-  | 'copy as image' | 'template list';
+  | 'copy as image' | 'template list' | 'plot dialog';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
+
+/**
+ * Plots the 'plot dialog' op inserted and removed again inside one step.
+ * The census only learns ids it sees at the end of a step, so without this an
+ * honest undo of that removal — in this walk or, the session being shared, a
+ * later one — would read as an element appearing from nowhere.
+ */
+const plotsInsertedByWalk = new Set<string>();
 
 interface OracleStats {
   invariants: number;
@@ -230,7 +238,7 @@ describe.skipIf(!electronBinary)('cross-context fuzz over three elements and two
           break;
         }
         if (censusMode === 'resync') {
-          const foreign = ids.filter((id) => !everKnown.has(id));
+          const foreign = ids.filter((id) => !everKnown.has(id) && !plotsInsertedByWalk.has(id));
           if (foreign.length > 0) {
             flag('census', `undo/redo materialised never-seen elements: [${foreign.join(', ')}]`);
             break;
@@ -245,6 +253,7 @@ describe.skipIf(!electronBinary)('cross-context fuzz over three elements and two
           expectedIds = expected;
         }
         for (const id of ids) everKnown.add(id);
+        for (const id of plotsInsertedByWalk) everKnown.add(id);
 
         // Oracle 5: nothing on the page blew up.
         const errors = await session.drainPageErrors();
@@ -407,6 +416,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
   if (pre.editing === null) add('page numbers', 1);
   if (pre.editing === null) add('theme apply', 1);
   if (pre.editing === null) add('template list', 1);
+  if (pre.editing === null) add('plot dialog', 1);
   add('grid toggle', 1);
   add('panel toggle', 1);
   add('view menu', 1);
@@ -1094,6 +1104,80 @@ async function performOp(
       }
       const expected = (await session.allElementIds());
       return expected;
+    }
+    case 'plot dialog': {
+      // Plot from the toolbar: a modal over the editor. Typing and Escape
+      // inside it belong to the dialog — no word on the slide may change and
+      // nothing may be inserted until Insert — and what Insert adds is one
+      // selected plot that Backspace removes again.
+      const reachable = await session.cdp.evaluate<boolean>(`(() => {
+        const trigger = document.querySelector('#toolbar button[aria-label="Plot"]');
+        return Boolean(trigger) && trigger.getClientRects().length > 0;
+      })()`);
+      if (!reachable) return 'same';
+      const texts = await session.allTexts();
+      const plots = () => session.cdp.evaluate<string[]>(
+        `window.store.slide.elements.filter((el) => el.type === 'plot').map((el) => el.id)`);
+      const dialogOpen = () => session.cdp.evaluate<boolean>(`Boolean(document.querySelector('.plot-dialog'))`);
+      const before = await plots();
+      await session.cdp.evaluate(`(document.querySelector('#toolbar button[aria-label="Plot"]').click(), true)`);
+      await wait(120);
+      if (!(await dialogOpen())) {
+        flag('routing', 'the Plot button opened no dialog');
+        return 'same';
+      }
+      // Real keys, with the grid's first cell focused: a number, then Backspace
+      // and Delete, which on the canvas would delete the selection.
+      await session.key('7', 55);
+      await session.key('Backspace', 8);
+      await session.key('Delete', 46);
+      await wait(60);
+      if ((await plots()).length !== before.length || !(await dialogOpen())) {
+        flag('census', 'typing in the plot dialog changed the slide');
+      }
+      const cancel = next() < 0.4;
+      if (cancel) {
+        await session.key('Escape', 27);
+      } else {
+        await session.cdp.evaluate(`([...document.querySelectorAll('.plot-dialog button')]
+          .find((button) => button.textContent === 'Insert').click(), true)`);
+      }
+      await wait(200);
+      if (await dialogOpen()) {
+        flag('routing', `the plot dialog stayed open after ${cancel ? 'Escape' : 'Insert'}`);
+        await session.cdp.evaluate(`(document.querySelector('.workflow-overlay')?.remove(), true)`);
+      }
+      const after = await plots();
+      if (cancel) {
+        if (after.length !== before.length) flag('census', 'a cancelled plot dialog inserted a plot');
+      } else {
+        const added = after.filter((id) => !before.includes(id));
+        if (added.length !== 1) {
+          flag('census', `Insert added ${added.length} plots`);
+        } else {
+          const post = await session.state();
+          if (post.selection.join() !== added[0]) {
+            flag('routing', `the new plot is not the selection: [${post.selection.join()}]`);
+          }
+          const drawn = await session.cdp.evaluate<number>(
+            `document.querySelectorAll('${elementSelector(added[0])} svg path').length`);
+          if (drawn === 0) flag('routing', 'the inserted plot drew no series');
+          for (const id of await session.allElementIds()) {
+            if (id.endsWith(`:${added[0]}`)) plotsInsertedByWalk.add(id);
+          }
+          // Take it back out, so the walk keeps the elements it knows.
+          await session.key('Backspace', 8);
+          await wait(150);
+          if ((await plots()).includes(added[0])) flag('census', 'Backspace left the selected plot');
+        }
+      }
+      const afterTexts = await session.allTexts();
+      for (const [id, text] of Object.entries(afterTexts)) {
+        if (texts[id] !== undefined && texts[id] !== text) {
+          flag('routing', `the plot dialog changed ${id}: "${texts[id]}" -> "${text}"`);
+        }
+      }
+      return 'same';
     }
     case 'cmd+a':
       await session.chord('a', 'KeyA', 65, MOD, pre.editing !== null ? ['selectAll'] : undefined);

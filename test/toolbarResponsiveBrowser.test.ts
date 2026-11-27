@@ -90,14 +90,14 @@ describe.skipIf(!electronBinary)('responsive desktop toolbar', () => {
     expect(medium.moreVisible).toBe(false);
     expect(medium.leftRight).toBeLessThanOrEqual(medium.centerLeft);
     expect(medium.centerRight).toBeLessThanOrEqual(medium.rightLeft);
-    expect(medium.insertLabels).toEqual(expect.arrayContaining(['Text', 'Shape', 'Table']));
+    expect(medium.insertLabels).toEqual(expect.arrayContaining(['Text', 'Shape', 'Table', 'Plot']));
     expect(medium.presentVisible).toBe(true);
 
     // Half a laptop screen (macOS Split View): Insert folds to its icons,
     // which keep their names for tooltips and screen readers.
     const half = await toolbarAt(600, (layout) => layout.classes.includes('toolbar-icons-only'));
     expect(half.insertWordsShown).toBe(false);
-    expect(half.insertNames).toEqual(['Text', 'Shape', 'Table']);
+    expect(half.insertNames).toEqual(['Text', 'Shape', 'Table', 'Plot']);
     expect(half.leftRight).toBeLessThanOrEqual(half.centerLeft);
     expect(half.centerRight).toBeLessThanOrEqual(half.rightLeft);
     expect(half.presentVisible).toBe(true);
@@ -108,7 +108,7 @@ describe.skipIf(!electronBinary)('responsive desktop toolbar', () => {
     expect(narrow.moreVisible).toBe(true);
     expect(narrow.leftRight).toBeLessThanOrEqual(narrow.centerLeft);
     expect(narrow.centerRight).toBeLessThanOrEqual(narrow.rightLeft);
-    expect(narrow.insertLabels).toEqual(expect.arrayContaining(['Text', 'Shape', 'Table']));
+    expect(narrow.insertLabels).toEqual(expect.arrayContaining(['Text', 'Shape', 'Table', 'Plot']));
     expect(narrow.presentVisible).toBe(true);
     expect(narrow.fileVisible).toBe(true);
   });

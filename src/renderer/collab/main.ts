@@ -21,10 +21,12 @@ import {
 import { showPdfExportDialog } from '../editor/pdfExportDialog.js';
 import { HistoryPanel } from '../editor/historyPanel.js';
 import {
+  createPlotInsertButton,
   createShapeInsertPicker,
   createTableInsertPicker,
   insertText,
 } from '../editor/elementCreation.js';
+import { editPlotInDialog } from '../editor/plotEditing.js';
 import { Inspector } from '../editor/inspector.js';
 import {
   barButton,
@@ -294,6 +296,8 @@ const presence = new PresenceOverlay(canvas, store);
 rail.presenceForSlide = (slideId) => presence.peersOnSlide(slideId);
 
 wireCanvasInspector(canvas, inspector);
+canvas.onEditPlot = (id) => void editPlotInDialog(store, id);
+inspector.onEditPlot = canvas.onEditPlot;
 
 const designWorkspace = new DesignWorkspace({
   canvasHost: el('canvas'),
@@ -911,6 +915,7 @@ function buildToolbar(): void {
     barIconButton('Text', TEXT_ICON, () => insertText(store)),
     createShapeInsertPicker(store),
     createTableInsertPicker(store),
+    createPlotInsertButton(store),
   );
 
   const right = document.createElement('div');

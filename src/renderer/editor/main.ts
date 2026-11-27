@@ -36,7 +36,10 @@ import { CssEditor } from './cssEditor.js';
 import { Inspector } from './inspector.js';
 import { HistoryPanel } from './historyPanel.js';
 import { authoredHtmlSync, fileName } from './htmlCompile.js';
-import { createShapeInsertPicker, createTableInsertPicker, insertText } from './elementCreation.js';
+import {
+  createPlotInsertButton, createShapeInsertPicker, createTableInsertPicker, insertText,
+} from './elementCreation.js';
+import { editPlotInDialog } from './plotEditing.js';
 import { createToolbarPicker, createToolbarSplitButton } from './exportPicker.js';
 import { showPdfExportDialog } from './pdfExportDialog.js';
 import { showWebExportDialog } from './webExportDialog.js';
@@ -284,6 +287,8 @@ const openRaster = (element: Extract<SlideElement, { type: 'image' }>) => {
   void window.api.openRaster({ src: element.src, elementId: element.id });
 };
 wireCanvasInspector(canvas, inspector, openTrim, openRaster);
+canvas.onEditPlot = (id) => void editPlotInDialog(store, id);
+inspector.onEditPlot = canvas.onEditPlot;
 
 /**
  * The agent's window into this editor: it publishes the computed selection to
@@ -559,6 +564,7 @@ function buildToolbar(): void {
     barIconButton('Text', TEXT_ICON, () => addText()),
     createShapeInsertPicker(store),
     createTableInsertPicker(store),
+    createPlotInsertButton(store),
   );
 
   const right = document.createElement('div');
