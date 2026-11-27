@@ -794,7 +794,7 @@ async function performOp(
           const pickTitle = next() < 0.5;
           const dir = await session.cdp.evaluate<string>(`document.querySelector('.bar-deck-name')?.title.split('\\n')[0] ?? ''`);
           await session.cdp.evaluate(`([...document.querySelectorAll('#ctx-menu button')]
-            .find((row) => row.textContent === (pickTitle ? 'Rename Title…' : 'Rename Folder…'))?.click(), true)`);
+            .find((row) => row.textContent === ${JSON.stringify(pickTitle ? 'Rename Title…' : 'Rename Folder…')})?.click(), true)`);
           await wait(80);
           if (!(await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('.deck-rename input'))`))) {
             flag('routing', `${pickTitle ? 'Rename Title…' : 'Rename Folder…'} did not open its dialog`);
