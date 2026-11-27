@@ -248,4 +248,39 @@ describe('deck picker import menu', () => {
     // along; nothing in the request says anything about access.
     expect(uploadCall()).toBe('/api/import-deck?name=My%20Talk&folder=conferences');
   });
+
+  it('lists each deck under its folder name with its title in a column of its own', async () => {
+    const decks = [
+      { id: 'Biweekly-Meetings', title: 'Biweekly-Meetings', slides: 35, editedAt: null, editors: 0, folder: '' },
+      { id: 'Ideas', title: 'Biweekly-Meetings', slides: 17, editedAt: null, editors: 0, folder: '' },
+    ];
+    const fetched = vi.fn(async (url: string, _init?: RequestInit) => new Response(
+      JSON.stringify(String(url).startsWith('/api/decks/title')
+        ? { id: 'Ideas', title: 'Idea Log' }
+        : String(url).startsWith('/api/decks') ? decks : []),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetched);
+    showDeckPicker({ dismissable: true, onStatus: () => {}, folder: '' });
+    await vi.waitFor(() => expect(document.querySelectorAll('button.deck-picker-row')).toHaveLength(2));
+    const header = [...document.querySelectorAll('.deck-picker-columns .deck-picker-row > span')]
+      .map((cell) => cell.textContent);
+    expect(header.slice(0, 2)).toEqual(['Name', 'Title']);
+    const rows = [...document.querySelectorAll<HTMLElement>('button.deck-picker-row')]
+      .map((row) => [row.children[0].textContent, row.children[1].textContent]);
+    expect(rows).toEqual([['Biweekly-Meetings', 'Biweekly-Meetings'], ['Ideas', 'Biweekly-Meetings']]);
+
+    // Each name has its own action, and the title one leaves the folder be.
+    const group = document.querySelectorAll('.deck-picker-row-group')[2] as HTMLElement;
+    const actions = [...group.querySelectorAll<HTMLButtonElement>('.deck-picker-actions button')];
+    expect(actions.map((button) => button.textContent))
+      .toEqual(['Rename Folder…', 'Rename Title…', 'Move…', 'Share…']);
+    actions[1].click();
+    const input = document.querySelector<HTMLInputElement>('.deck-retitle input')!;
+    expect(input.value).toBe('Biweekly-Meetings');
+    input.value = 'Idea Log';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => expect(fetched.mock.calls.map(([url]) => String(url)))
+      .toContain('/api/decks/title?deck=Ideas&title=Idea%20Log'));
+  });
 });

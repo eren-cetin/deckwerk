@@ -74,10 +74,11 @@ are intentionally omitted.
   PDF download where the deployment has a rendering service; retain print as
   the no-Chromium server fallback.
 - [x] **P1 — Rename the open deck.** The deck folder's menu in the toolbar
-  offers **Rename…** with the desktop's own dialog
-  (`src/renderer/editor/renameDialog.ts`), to anyone the server lets rename
-  it: everyone without `--access`, otherwise the deck's owner or the admin;
-  the deck picker's Rename… uses the same dialog. Unlike the desktop, other
+  offers **Rename Folder…** with the desktop's own dialog
+  (`src/renderer/editor/renameDialog.ts`) and **Rename Title…** for the title
+  stored in the deck, to anyone the server lets rename it: everyone without
+  `--access`, otherwise the deck's owner or the admin; the deck picker's row
+  actions use the same dialogs. Unlike the desktop, other
   people may have the deck open: the server moves the live session with the
   folder, and every editor tab, Present window and agent bridge follows the
   deck to its new id without reloading, keeping undo. The old id redirects

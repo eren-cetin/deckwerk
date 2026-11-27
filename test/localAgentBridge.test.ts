@@ -329,8 +329,6 @@ describe('slide-agent connect', { timeout: 120_000 }, () => {
     expect(marker.previousDeckIds).toEqual([DECK_ID]);
     expect(bridge.target.deckId).toBe('Renamed Demo');
     expect(bridge.target.wsUrl).toContain('deck=Renamed+Demo');
-    await until(async () => JSON.parse(await readFile(join(mirrorDir, 'deck.json'), 'utf8')).title === 'Renamed Demo',
-      'the title change to reach the mirror');
     expect(await readFile(join(mirrorDir, 'AGENTS.md'), 'utf8')).toContain('Renamed Demo');
 
     // The agent keeps working from the same folder, now against the new id,

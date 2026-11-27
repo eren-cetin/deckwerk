@@ -116,11 +116,15 @@ that path as the id.
 - `POST /api/decks/move?deck=<id>&folder=<path>` files an existing deck
   somewhere else. The id is the room key and the session directory, so a move
   is refused while anyone has the deck open.
-- `POST /api/decks/rename?deck=<id>&name=<name>` renames a deck: the last
-  segment of its id and the title the picker shows are the same name, so both
-  change together. Unlike a move it works while people have the deck open
-  (see **Renaming an open deck** below). A second rename of the same deck
-  while one is running, or a name that is already taken, gets 409.
+- `POST /api/decks/rename?deck=<id>&name=<name>` renames a deck's folder, and
+  with it the last segment of its id. The title stored in the deck is a
+  separate name and is left alone. Unlike a move it works while people have
+  the deck open (see **Renaming an open deck** below). A second rename of the
+  same deck while one is running, or a name that is already taken, gets 409.
+- `POST /api/decks/title?deck=<id>&title=<title>` changes the title stored in
+  the deck — what Present and exports show — and nothing else: the folder, the
+  id and every link stay. A deck that is open gets it as an ordinary `txn`
+  (from `byClientId: ''`). Titles need not be unique.
 - `POST /api/folders/rename?path=<path>&name=<name>` renames a folder in
   place. Every deck inside is filed under that path, so all of their ids
   change at once and none of them may be open.
@@ -137,9 +141,9 @@ the new id, so an agent half-way through a draft can still apply it. With
 `--access` the `access.json` sidecar moves with the folder, so sharing is
 unchanged, and only the deck's owner or the admin may rename it.
 
-Peers then see the title change as an ordinary `txn` (from `byClientId: ''`),
-followed by a `renamed {previousId, deckId, title}` message telling them the
-deck's new id. Editor tabs, Present windows and agent bridges switch their
+Peers then get a `renamed {previousId, deckId, title}` message telling them
+the deck's new id; `title` is the deck's own title, which the rename does not
+change. Editor tabs, Present windows and agent bridges switch their
 URLs to it; nothing reloads, and undo survives. The protocol version is
 unchanged: an older client drops the unknown message and keeps working
 through the redirect below.
@@ -153,8 +157,11 @@ older bridge still holding the old id fails to reconnect and has to be pointed
 at the new name.
 
 The picker browses the tree with a breadcrumb; New, Import and New folder all
-act in the folder you are looking at. Each row a person manages carries
-Rename…, and a deck row also Move… and Share….
+act in the folder you are looking at. A deck row shows the folder it is filed
+under and, in a column of its own, the title stored inside it; the two can
+differ, and a copied deck shares its source's title. Each folder row a person
+manages carries Rename…; a deck row carries Rename Folder…, Rename Title…,
+Move… and Share….
 
 ### Templates
 

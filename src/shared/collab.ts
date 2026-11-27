@@ -174,8 +174,9 @@ export const ServerEndedSchema = z.object({
 /**
  * The deck's folder was renamed while this peer had it open. The room, its
  * history and this connection carry on unchanged; only the id the client uses
- * in URLs moves. Sent after the title change as an ordinary `txn`, and again
- * to a peer that joins under an id the deck has since left. Clients that
+ * in URLs moves. `title` is the deck's own title, which a folder rename
+ * leaves alone. Sent again to a peer that joins under an id the deck has
+ * since left. Clients that
  * predate it drop it as an unknown kind and keep working through the
  * server's old-id redirect.
  */

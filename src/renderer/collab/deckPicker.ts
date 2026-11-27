@@ -15,7 +15,7 @@
  */
 import { createToolbarPicker, type ToolbarPickerOption } from '../editor/exportPicker.js';
 import { showTemplatePicker } from '../editor/templateDialogs.js';
-import { showRenameDeckDialog } from '../editor/renameDialog.js';
+import { showRenameDeckDialog, showRenameTitleDialog } from '../editor/renameDialog.js';
 import { buildZip, type ZipInput } from '../../shared/zip.js';
 
 
@@ -328,6 +328,11 @@ function pickerRow(
   return row;
 }
 
+/** Return the name a deck is filed under: the last segment of its id. */
+function deckName(deck: { id: string }): string {
+  return deck.id.slice(deck.id.lastIndexOf('/') + 1);
+}
+
 /** "just now", "5 min ago", "3 h ago", "yesterday", then the date. */
 export function editedAgo(iso: string, now = Date.now()): string {
   const minutes = Math.floor((now - Date.parse(iso)) / 60_000);
@@ -426,6 +431,7 @@ export function showDeckPicker(opts: {
 
   const folderRow = (entry: FolderEntry): HTMLElement => {
     const row = pickerRow('button', entry.name, [
+      '',
       `${entry.decks} presentation${entry.decks === 1 ? '' : 's'}`,
       '',
       '',
@@ -470,15 +476,20 @@ export function showDeckPicker(opts: {
     const access = deck.role === 'view'
       ? 'view only'
       : deck.visibility ? (deck.visibility === 'public' ? 'public' : 'private') : '';
-    const row = pickerRow('button', deck.title, [
+    // A deck has two names: the folder it is filed under, which is unique
+    // and is its id, and the title stored inside it, which a copied deck
+    // shares with its source. Each gets a column, or two rows read as one deck.
+    const filedAs = deckName(deck);
+    const row = pickerRow('button', filedAs, [
+      deck.title,
       `${deck.slides} slide${deck.slides === 1 ? '' : 's'}`,
       deck.editedAt ? editedAgo(deck.editedAt) : '',
       deck.editors > 0 ? `${deck.editors} editing` : '',
       opts.access && deck.owner && deck.owner !== opts.access.user ? deck.owner : '',
       access,
     ]);
-    if (deck.editedAt) row.children[2]?.setAttribute('title', new Date(deck.editedAt).toLocaleString());
-    if (deck.editors > 0) row.children[3]?.classList.add('deck-picker-live');
+    if (deck.editedAt) row.children[3]?.setAttribute('title', new Date(deck.editedAt).toLocaleString());
+    if (deck.editors > 0) row.children[4]?.classList.add('deck-picker-live');
     if (deck.id === current) row.classList.add('active');
     row.addEventListener('click', () => {
       if (deck.id === current) overlay.remove();
@@ -487,9 +498,25 @@ export function showDeckPicker(opts: {
     // Without --access the server has no owners, so everything is yours to
     // manage — the same rule the folder rows already follow.
     if (!(deck.canManage ?? !opts.access)) return rowGroup(row, []);
-    const rename = rowButton('Rename…', 'Give this presentation another name', () => {
+    const retitle = rowButton('Rename Title…', 'Change the title stored in this presentation', () => {
       void (async () => {
-        const name = await showRenameDeckDialog(deck.id.slice(deck.id.lastIndexOf('/') + 1));
+        const title = await showRenameTitleDialog(deck.title);
+        if (!title) return;
+
+        const response = await fetch(
+          `/api/decks/title?deck=${encodeURIComponent(deck.id)}&title=${encodeURIComponent(title)}`,
+          { method: 'POST' },
+        );
+        const body = await response.json() as { title?: string; error?: string };
+        if (!response.ok) throw new Error(body.error ?? `rename failed (${response.status})`);
+
+        opts.onStatus(`Title changed to “${body.title ?? title}”`);
+        reopen(folder);
+      })().catch((error) => opts.onStatus(`Rename failed: ${error instanceof Error ? error.message : error}`));
+    });
+    const rename = rowButton('Rename Folder…', 'Rename the folder this presentation is filed under', () => {
+      void (async () => {
+        const name = await showRenameDeckDialog(filedAs, 'Rename folder');
         if (!name) return;
         const response = await fetch(
           `/api/decks/rename?deck=${encodeURIComponent(deck.id)}&name=${encodeURIComponent(name)}`,
@@ -497,7 +524,7 @@ export function showDeckPicker(opts: {
         );
         const body = await response.json() as { id?: string; title?: string; error?: string };
         if (!response.ok || !body.id) throw new Error(body.error ?? `rename failed (${response.status})`);
-        opts.onStatus(`Renamed to “${body.title ?? name}”`);
+        opts.onStatus(`Folder renamed to “${deckName({ id: body.id })}”`);
         // The name is also the last segment of the deck id, so a deck open in
         // this tab has just moved out from under it. An editor follows it
         // where it stands, keeping undo; anything else reloads at the new id.
@@ -516,7 +543,7 @@ export function showDeckPicker(opts: {
       'Change who can open this presentation',
       () => showShareDialog(deck.id, opts.onStatus, () => reopen(folder)),
     );
-    return rowGroup(row, [rename, move, share]);
+    return rowGroup(row, [rename, retitle, move, share]);
   };
 
   const renderTrail = (folders: FolderEntry[]) => {
@@ -669,7 +696,7 @@ export function showDeckPicker(opts: {
   head.append(title, trail);
   const columns = document.createElement('div');
   columns.className = 'deck-picker-columns';
-  columns.append(rowGroup(pickerRow('div', 'Name', ['Size', 'Last edit', 'Editing', 'Owner', 'Access']), []));
+  columns.append(rowGroup(pickerRow('div', 'Name', ['Title', 'Size', 'Last edit', 'Editing', 'Owner', 'Access']), []));
   const foot = document.createElement('div');
   foot.className = 'deck-picker-foot';
   foot.append(progress, actions);
@@ -694,7 +721,7 @@ function showMoveDialog(
   const box = document.createElement('div');
   box.className = 'workflow-dialog';
   const title = document.createElement('h2');
-  title.textContent = `Move “${deck.title}”`;
+  title.textContent = `Move “${deckName(deck)}”`;
   const label = document.createElement('label');
   label.className = 'share-dialog-visibility';
   label.textContent = 'Folder: ';
@@ -726,7 +753,7 @@ function showMoveDialog(
       );
       const body = await response.json() as { id?: string; error?: string };
       if (!response.ok || !body.id) throw new Error(body.error ?? `move failed (${response.status})`);
-      onStatus(`Moved “${deck.title}” to ${select.value || 'the top level'}`);
+      onStatus(`Moved “${deckName(deck)}” to ${select.value || 'the top level'}`);
       overlay.remove();
       // The id changed with the folder, so a deck that is open here is now
       // open at a path that no longer exists: send the tab to the new one.

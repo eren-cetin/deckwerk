@@ -915,7 +915,7 @@ export function connectAgentBridge(options: ConnectOptions): AgentBridge {
         previousDeckIds = [...new Set([...previousDeckIds, previous])].filter((id) => id !== msg.deckId);
         await writeMarker();
         await writeGuides();
-        log(`the deck was renamed to "${msg.title}"; now following "${msg.deckId}"`);
+        log(`the deck's folder was renamed; now following "${msg.deckId}"`);
         return;
       }
     }

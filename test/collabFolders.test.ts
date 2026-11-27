@@ -183,14 +183,15 @@ describe('collab server folders', () => {
       socket.terminate();
     });
 
-    it('renames a presentation, its folder on disk and its title together', async () => {
+    it('renames a presentation\'s folder on disk and leaves its title alone', async () => {
+      const before = JSON.parse(await readFile(join(rootDir, 'loose', 'deck.json'), 'utf8')).title;
       const renamed = await api('/api/decks/rename?deck=loose&name=Big%20Talk', { method: 'POST' });
-      expect(renamed.body).toEqual({ id: 'Big Talk', title: 'Big Talk' });
+      expect(renamed.body).toEqual({ id: 'Big Talk', title: before });
       expect(existsSync(join(rootDir, 'loose'))).toBe(false);
       expect(JSON.parse(await readFile(join(rootDir, 'Big Talk', 'deck.json'), 'utf8')).title)
-        .toBe('Big Talk');
+        .toBe(before);
       expect((await api('/api/decks')).body).toContainEqual(
-        { id: 'Big Talk', title: 'Big Talk', slides: 1, editedAt: expect.any(String), editors: 0, folder: '' },
+        { id: 'Big Talk', title: before, slides: 1, editedAt: expect.any(String), editors: 0, folder: '' },
       );
 
       // A deck inside a folder keeps its folder, and a name already taken is
@@ -230,15 +231,15 @@ describe('collab server folders', () => {
       await vi.waitFor(() => expect(peer.messages.some((m) => m.txnId === 'edit-1')).toBe(true));
       const renamed = await api('/api/decks/rename?deck=loose&name=Big%20Talk', { method: 'POST' });
       expect(renamed.status).toBe(200);
-      expect(renamed.body).toEqual({ id: 'Big Talk', title: 'Big Talk' });
+      const title = renamed.body.title as string;
+      expect(renamed.body).toEqual({ id: 'Big Talk', title });
+      expect(title).not.toBe('Big Talk');
 
-      // The peer sees the title change as an ordinary transaction, then where
-      // the deck went.
+      // The peer is told where the deck went; its title is not touched, so
+      // no transaction rides along.
       await vi.waitFor(() => expect(peer.messages.some((m) => m.kind === 'renamed')).toBe(true));
       const tail = peer.messages.slice(peer.messages.findIndex((m) => m.txnId === 'edit-1') + 1);
-      expect(tail.map((m) => m.kind)).toEqual(['txn', 'renamed']);
-      expect(tail[0]).toMatchObject({ byClientId: '', ops: [{ op: 'updateDeck', title: 'Big Talk' }] });
-      expect(tail[1]).toEqual({ kind: 'renamed', previousId: 'loose', deckId: 'Big Talk', title: 'Big Talk' });
+      expect(tail).toEqual([{ kind: 'renamed', previousId: 'loose', deckId: 'Big Talk', title }]);
 
       // The same room carries on under the new id, edits included.
       peer.socket.send(JSON.stringify({
@@ -250,9 +251,39 @@ describe('collab server folders', () => {
       expect((await api('/api/decks')).body).toContainEqual(expect.objectContaining({ id: 'Big Talk', editors: 1 }));
       await server.flush();
       const saved = JSON.parse(await readFile(join(rootDir, 'Big Talk', 'deck.json'), 'utf8'));
-      expect(saved.title).toBe('Big Talk');
+      expect(saved.title).toBe(title);
       expect(saved.slides.map((slide: { id: string }) => slide.id)).toEqual(['s1', 's2', 's3']);
       expect(existsSync(join(rootDir, 'loose'))).toBe(false);
+      peer.socket.terminate();
+    });
+
+    it('renames a title without moving the folder, on disk and for people in the deck', async () => {
+      const closed = await api('/api/decks/title?deck=loose&title=%20Quarterly%20%20Review%20', { method: 'POST' });
+      expect(closed.body).toEqual({ id: 'loose', title: 'Quarterly Review' });
+      expect(JSON.parse(await readFile(join(rootDir, 'loose', 'deck.json'), 'utf8')).title)
+        .toBe('Quarterly Review');
+      expect((await api('/api/decks')).body).toContainEqual(
+        expect.objectContaining({ id: 'loose', title: 'Quarterly Review' }),
+      );
+
+      // Open, it arrives as an ordinary transaction and nobody is moved.
+      const peer = await joinRoom('loose');
+      const before = peer.messages.length;
+      const live = await api('/api/decks/title?deck=loose&title=Board%20Update', { method: 'POST' });
+      expect(live.body).toEqual({ id: 'loose', title: 'Board Update' });
+      await vi.waitFor(() => expect(peer.messages.length).toBeGreaterThan(before));
+      const tail = peer.messages.slice(before);
+      expect(tail).toHaveLength(1);
+      expect(tail[0]).toMatchObject({
+        kind: 'txn', byClientId: '', ops: [{ op: 'updateDeck', title: 'Board Update' }],
+      });
+      await server.flush();
+      expect(JSON.parse(await readFile(join(rootDir, 'loose', 'deck.json'), 'utf8')).title)
+        .toBe('Board Update');
+      expect(existsSync(join(rootDir, 'loose'))).toBe(true);
+
+      expect((await api('/api/decks/title?deck=loose&title=%20', { method: 'POST' })).status).toBe(400);
+      expect((await api('/api/decks/title?deck=nope&title=x', { method: 'POST' })).status).toBe(404);
       peer.socket.terminate();
     });
 
@@ -263,19 +294,21 @@ describe('collab server folders', () => {
       expect((await api('/api/decks/rename?deck=loose&name=Big%20Talk', { method: 'POST' })).status).toBe(200);
 
       // HTTP, assets and a reconnecting socket that still use the old id.
-      expect((await api('/api/deck?deck=loose')).body.title).toBe('Big Talk');
+      expect(existsSync(join(rootDir, 'loose'))).toBe(false);
+      expect((await api('/api/deck?deck=loose')).status).toBe(200);
       expect(await (await fetch(`${base}/decks/loose/assets/logo.txt`)).text()).toBe('hello');
       const stale = await joinRoom('loose');
       await vi.waitFor(() => expect(stale.messages.map((m) => m.kind)).toContain('renamed'));
-      expect(stale.messages[0]).toMatchObject({ kind: 'welcome', deck: { title: 'Big Talk' } });
+      expect(stale.messages[0]).toMatchObject({ kind: 'welcome', deck: { title: 'loose' } });
       expect(stale.messages.find((m) => m.kind === 'renamed'))
-        .toEqual({ kind: 'renamed', previousId: 'loose', deckId: 'Big Talk', title: 'Big Talk' });
+        .toEqual({ kind: 'renamed', previousId: 'loose', deckId: 'Big Talk', title: 'loose' });
       expect((await api('/api/decks')).body).toContainEqual(expect.objectContaining({ id: 'Big Talk', editors: 2 }));
 
       // A deck made under the old name is that deck from then on.
       expect((await api('/api/decks?name=loose', { method: 'POST' })).status).toBe(200);
       const fresh = await api('/api/deck?deck=loose');
-      expect(fresh.body.title).not.toBe('Big Talk');
+      expect(fresh.body.slides).toHaveLength(1);
+      expect((await api('/api/decks')).body).toContainEqual(expect.objectContaining({ id: 'loose', editors: 0 }));
       expect((await fetch(`${base}/decks/loose/assets/logo.txt`)).status).not.toBe(200);
       peer.socket.terminate();
       stale.socket.terminate();
@@ -428,13 +461,13 @@ describe('collab server folders', () => {
       const aliceDeck = await api('/api/decks/rename?deck=alice-work%2Fshared-plan&name=Plan%20B', {
         method: 'POST', headers: asUser(ALICE),
       });
-      expect(aliceDeck.body).toEqual({ id: 'alice-work/Plan B', title: 'Plan B' });
+      expect(aliceDeck.body).toEqual({ id: 'alice-work/Plan B', title: 'alice-work/shared-plan' });
       const aliceFolder = await api('/api/folders/rename?path=alice-work&name=alice-plans', {
         method: 'POST', headers: asUser(ALICE),
       });
       expect(aliceFolder.body).toEqual({ path: 'alice-plans' });
       expect((await api('/api/decks', { headers: asUser(BOB) })).body)
-        .toEqual([expect.objectContaining({ id: 'alice-plans/Plan B', title: 'Plan B' })]);
+        .toEqual([expect.objectContaining({ id: 'alice-plans/Plan B', title: 'alice-work/shared-plan' })]);
     });
 
     it('refuses to reach a private deck by way of its own subdirectories', async () => {

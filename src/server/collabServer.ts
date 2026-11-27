@@ -432,10 +432,10 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
    *
    * The session moves its folder (edits keep applying in memory meanwhile and
    * are written to the new folder), the room and everything keyed by the id
-   * follow, and the old id becomes a redirect. Peers then see the title change
-   * as an ordinary transaction, followed by `renamed`, which moves their URLs.
+   * follow, and the old id becomes a redirect. Peers get `renamed`, which
+   * moves their URLs. The deck's title is a separate name and stays as it is.
    */
-  async function renameLiveRoom(room: Room, fromId: string, toId: string, title: string): Promise<void> {
+  async function renameLiveRoom(room: Room, fromId: string, toId: string): Promise<void> {
     if (toId !== fromId) {
       const fromDir = deckDirOf(fromId);
       const toDir = deckDirOf(toId);
@@ -447,19 +447,25 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
       localAgents?.relocate(fromDir, toDir);
       noteDeckAlias(fromId, toId);
     }
-    if (room.session.deck.title !== title) {
-      const ops: AgentOperation[] = [{ op: 'updateDeck', title }];
-      const applied = room.session.applyOps(ops);
-      broadcast(room, {
-        kind: 'txn',
-        seq: applied.seq,
-        txnId: `rename-${randomUUID()}`,
-        byClientId: '',
-        label: 'Rename presentation',
-        ops,
-      });
-    }
-    broadcast(room, { kind: 'renamed', previousId: fromId, deckId: toId, title });
+    broadcast(room, {
+      kind: 'renamed', previousId: fromId, deckId: toId, title: room.session.deck.title,
+    });
+  }
+
+  /** Give a deck that people have open another title, as one transaction every peer sees. */
+  function retitleLiveRoom(room: Room, title: string): void {
+    if (room.session.deck.title === title) return;
+
+    const ops: AgentOperation[] = [{ op: 'updateDeck', title }];
+    const applied = room.session.applyOps(ops);
+    broadcast(room, {
+      kind: 'txn',
+      seq: applied.seq,
+      txnId: `retitle-${randomUUID()}`,
+      byClientId: '',
+      label: 'Rename title',
+      ops,
+    });
   }
 
   /**
@@ -1371,6 +1377,7 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
 
     if (hostedDeckId && (path === '/api/decks' || path === '/api/folders'
       || path === '/api/decks/move' || path === '/api/decks/rename'
+      || path === '/api/decks/title'
       || path === '/api/folders/rename'
       || path === '/api/import-keynote' || path === '/api/import-pptx')
       && request.method !== 'GET') {
@@ -1594,9 +1601,50 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
       return;
     }
 
-    // Rename a presentation: its folder on disk and the title the picker
-    // shows are the same name, so both change together — a deck called one
-    // thing and filed under another is exactly the confusion this avoids.
+    // Give a presentation another title. The title is the name inside the
+    // deck (what Present and exports show); its folder, and so its id and
+    // every link to it, stay where they are.
+    if (path === '/api/decks/title' && request.method === 'POST') {
+      if (!deckParam) return respondJson(response, 400, { error: 'missing deck' });
+      const title = (url.searchParams.get('title') ?? '').replace(/\s+/g, ' ').trim();
+      if (!title || title.length > 200) {
+        return respondJson(response, 400, { error: 'missing or invalid title' });
+      }
+
+      let dir: string;
+      try {
+        dir = deckDirOf(deckParam);
+      } catch {
+        return respondJson(response, 400, { error: 'invalid deck id' });
+      }
+
+      if (!isDeckDir(dir)) return respondJson(response, 404, { error: 'no such deck' });
+
+      if (accessControl && identity) {
+        const access = await readDeckAccess(dir, accessControl);
+        if (!canManageDeck(identity.login, access, accessControl)) {
+          return respondJson(response, 403, { error: 'only the deck owner or the admin can rename it' });
+        }
+      }
+
+      try {
+        await roomsOpening.get(deckParam)?.catch(() => undefined);
+        const room = rooms.get(deckParam);
+        if (room) retitleLiveRoom(room, title);
+        else await saveDeck(dir, { ...await loadDeck(dir), title });
+      } catch (error) {
+        return respondJson(response, 500, {
+          error: `could not rename the title: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+
+      respondJson(response, 200, { id: deckParam, title });
+      return;
+    }
+
+    // Rename a presentation's folder on disk, and with it the last segment
+    // of its id. The title inside the deck is a separate name with its own
+    // route above, so a rename here never rewrites what the slides are called.
     if (path === '/api/decks/rename' && request.method === 'POST') {
       if (!deckParam) return respondJson(response, 400, { error: 'missing deck' });
       const name = sanitizeDeckId(url.searchParams.get('name') ?? '');
@@ -1636,17 +1684,19 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
       const done = new Promise<void>((resolveDone) => { finish = resolveDone; });
       renamesInFlight.set(deckParam, done);
       renamesInFlight.set(id, done);
+      let title: string;
       try {
         await roomsOpening.get(deckParam)?.catch(() => undefined);
         const room = rooms.get(deckParam);
         if (room) {
           // Open somewhere: the session moves with its folder and everyone
           // in the room follows, so nobody has to close anything first.
-          await renameLiveRoom(room, deckParam, id, name);
+          await renameLiveRoom(room, deckParam, id);
+          title = room.session.deck.title;
         } else {
           const busy = await relocateDeck(deckParam, id, 'renaming');
           if (busy) return respondJson(response, busy.status, { error: busy.error });
-          await saveDeck(to, { ...await loadDeck(to), title: name });
+          title = (await loadDeck(to)).title;
           if (id !== deckParam) noteDeckAlias(deckParam, id);
         }
       } catch (error) {
@@ -1658,7 +1708,7 @@ export async function startCollabServer(options: CollabServerOptions): Promise<R
         renamesInFlight.delete(id);
         finish();
       }
-      respondJson(response, 200, { id, title: name });
+      respondJson(response, 200, { id, title });
       return;
     }
 

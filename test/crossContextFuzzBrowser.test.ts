@@ -772,7 +772,7 @@ async function performOp(
     }
     case 'path menu': {
       // The deck folder's menu opens from the toolbar wherever focus is, edits
-      // included, and a press elsewhere (or Rename… then Escape) puts it away
+      // included, and a press elsewhere (or a rename then Escape) puts it away
       // with nothing changed.
       const texts = await session.allTexts();
       const visible = await session.cdp.evaluate<boolean>(`(() => {
@@ -786,17 +786,18 @@ async function performOp(
         const rows = await session.cdp.evaluate<string[]>(
           `[...document.querySelectorAll('#ctx-menu button')].map((row) => row.textContent)`);
         // The browser's server folder has no Finder or local path to offer.
-        const offered = rows.filter((row) => row !== 'Rename…').join();
+        const offered = rows.filter((row) => !row.startsWith('Rename ')).join();
         if (offered !== 'Copy link,Open folder…') flag('routing', `the deck folder menu offered ${rows.join(', ') || 'nothing'}`);
-        if (rows.includes('Rename…') && next() < 0.5) {
-          // Rename… opens its dialog, and Escape puts it away with the deck
-          // left where it was.
+        if (rows.includes('Rename Folder…') && next() < 0.5) {
+          // Either rename opens its dialog, and Escape puts it away with the
+          // deck left where it was.
+          const pickTitle = next() < 0.5;
           const dir = await session.cdp.evaluate<string>(`document.querySelector('.bar-deck-name')?.title.split('\\n')[0] ?? ''`);
           await session.cdp.evaluate(`([...document.querySelectorAll('#ctx-menu button')]
-            .find((row) => row.textContent === 'Rename…')?.click(), true)`);
+            .find((row) => row.textContent === (pickTitle ? 'Rename Title…' : 'Rename Folder…'))?.click(), true)`);
           await wait(80);
           if (!(await session.cdp.evaluate<boolean>(`Boolean(document.querySelector('.deck-rename input'))`))) {
-            flag('routing', 'Rename… did not open its dialog');
+            flag('routing', `${pickTitle ? 'Rename Title…' : 'Rename Folder…'} did not open its dialog`);
           }
           await session.cdp.evaluate(`(document.querySelector('.deck-rename input')?.dispatchEvent(
             new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true)`);

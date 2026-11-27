@@ -95,11 +95,12 @@ describe.skipIf(!electronBinary)('renaming a deck that is open in the browser', 
     await first.key('Escape', 27);
 
     // Rename from the first tab's folder menu, typing the name for real.
+    const titleBefore = (await session.fetchDeck()).title;
     await first.click('.bar-deck-name', 'deck folder');
     await eventually(() => first.evaluate<string[]>(
       `[...document.querySelectorAll('#ctx-menu button')].map((row) => row.textContent)`),
-    'the folder menu never offered Rename…', (rows) => rows.includes('Rename…'));
-    await first.clickByText('#ctx-menu button', 'Rename…');
+    'the folder menu never offered Rename Folder…', (rows) => rows.includes('Rename Folder…'));
+    await first.clickByText('#ctx-menu button', 'Rename Folder…');
     await eventually(() => first.evaluate<boolean>(
       `document.activeElement === document.querySelector('.deck-rename input')`),
     'the rename dialog never took focus', Boolean);
@@ -115,7 +116,8 @@ describe.skipIf(!electronBinary)('renaming a deck that is open in the browser', 
     }
     expect(await second.evaluate<string>(`location.search`)).toContain('tab=second');
     expect(await first.evaluate<boolean>(`Boolean(document.querySelector('.deck-rename'))`)).toBe(false);
-    expect((await session.fetchDeck(RENAMED)).title).toBe('Big Talk');
+    // The folder moved; the title inside the deck is a separate name.
+    expect((await session.fetchDeck(RENAMED)).title).toBe(titleBefore);
     expect(existsSync(join(session.decksRoot, 'talks', 'demo'))).toBe(false);
 
     // The presentation follows too, and its pair channel stays the one it opened with.
@@ -140,7 +142,7 @@ describe.skipIf(!electronBinary)('renaming a deck that is open in the browser', 
     await session.server.flush();
     const saved = parseDeck(JSON.parse(await readFile(join(session.decksRoot, 'talks', 'Big Talk', 'deck.json'), 'utf8')));
     expect(saved.slides[0].elements).toHaveLength(3);
-    expect(saved.title).toBe('Big Talk');
+    expect(saved.title).toBe(titleBefore);
     expect(existsSync(join(session.decksRoot, 'talks', 'demo'))).toBe(false);
     await eventually(() => present.evaluate<number>(
       `document.querySelectorAll('#stage .slide [data-element-id]').length`),

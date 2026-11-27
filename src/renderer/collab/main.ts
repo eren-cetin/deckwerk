@@ -70,7 +70,7 @@ import { createTemplateFlows } from '../editor/templateActions.js';
 import { DesignWorkspace } from '../editor/designWorkspace.js';
 import { installResponsiveToolbar } from '../editor/responsiveToolbar.js';
 import { deckPathParts } from '../editor/deckPath.js';
-import { showRenameDeckDialog } from '../editor/renameDialog.js';
+import { showRenameDeckDialog, showRenameTitleDialog } from '../editor/renameDialog.js';
 import { openContextMenu } from '../editor/contextMenuPlacement.js';
 
 /**
@@ -437,7 +437,7 @@ const bridge = new CollabBridge(wsUrl, undefined, {
       ? 'Reconnected — 1 change made while disconnected could not be saved and was discarded.'
       : `Reconnected — ${count} changes made while disconnected could not be saved and were discarded.`);
   },
-  onRenamed: (message) => followRename(message.previousId, message.deckId, message.title),
+  onRenamed: (message) => followRename(message.previousId, message.deckId),
   onEnded: () => {
     connected = false;
     connectionState = 'session ended by the host';
@@ -712,7 +712,11 @@ function openDeckPathMenu(anchor: HTMLElement): void {
       onCurrentRenamed: followRename,
     }));
   }
-  if (canRename()) item('Rename…', () => void renamePresentation());
+  if (canRename()) {
+    item('Rename Folder…', () => void renamePresentation());
+    item('Rename Title…', () => void renameTitle());
+  }
+
   const box = anchor.getBoundingClientRect();
   openContextMenu(menu, { x: box.left, y: box.bottom + 4 });
   menu.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -737,7 +741,7 @@ function canRename(): boolean {
  * Arrives twice for this tab's own rename (the reply and the broadcast), so
  * a second call for the same id does nothing.
  */
-function followRename(previousId: string, nextId: string, title: string): void {
+function followRename(previousId: string, nextId: string): void {
   if (nextId === openDeckId) return;
   const ownRename = renamingTo === nextId;
   openDeckId = nextId;
@@ -753,7 +757,7 @@ function followRename(previousId: string, nextId: string, title: string): void {
   }
   if (!ownRename) {
     const from = deckPathParts(previousId).name;
-    setStatusMessage(`“${from}” was renamed to “${title}”`);
+    setStatusMessage(`“${from}” was renamed to “${deckPathParts(nextId).name}”`);
   } else {
     renderStatus();
   }
@@ -769,7 +773,7 @@ let renamingTo: string | null = null;
 async function renamePresentation(): Promise<void> {
   const from = currentDeckId();
   const current = deckPathParts(from).name;
-  const name = await showRenameDeckDialog(current);
+  const name = await showRenameDeckDialog(current, 'Rename folder');
   if (!name) return;
   try {
     const renamed = await runOperation(`Renaming ${current}…`, async (operation) => {
@@ -786,12 +790,34 @@ async function renamePresentation(): Promise<void> {
     });
     // The server may have tidied the name (characters a folder cannot hold).
     renamingTo = renamed.id;
-    followRename(from, renamed.id, renamed.title);
+    followRename(from, renamed.id);
     setStatusMessage(`Renamed the presentation to ${deckPathParts(renamed.id).name}`);
   } catch (err) {
     setStatusMessage(`Could not rename the presentation: ${err instanceof Error ? err.message : err}`);
   } finally {
     renamingTo = null;
+  }
+}
+
+/**
+ * Rename the open deck's title. The server applies it as one transaction, so
+ * it reaches this tab and every other peer the same way and nothing moves.
+ */
+async function renameTitle(): Promise<void> {
+  const title = await showRenameTitleDialog(store.get().deck.title);
+  if (!title) return;
+
+  try {
+    const response = await fetch(
+      `/api/decks/title?deck=${encodeURIComponent(currentDeckId())}&title=${encodeURIComponent(title)}`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => null) as { title?: string; error?: string } | null;
+    if (!response.ok) throw new Error(body?.error ?? `HTTP ${response.status}`);
+
+    setStatusMessage(`Changed the title to “${body?.title ?? title}”`);
+  } catch (err) {
+    setStatusMessage(`Could not rename the title: ${err instanceof Error ? err.message : err}`);
   }
 }
 
